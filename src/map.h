@@ -3,8 +3,6 @@
 #ifndef _MAP_H
 #define _MAP_H
 
-#include <stdio.h>
-#include <stdlib.h>
 #include <stdint.h>
 
 #define MAP_MOVE(pos,dir)  (((pos)+globals.map_dirs[(dir)]) & globals.map_index_mask)

@@ -3,8 +3,6 @@
 #ifndef _GLOBALS_H
 #define _GLOBALS_H
 
-#include <stdio.h>
-#include <stdlib.h>
 #include <stdint.h>
 
 #include "freeserf.h"

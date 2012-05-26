@@ -3,8 +3,6 @@
 #ifndef _SERF_H
 #define _SERF_H
 
-#include <stdio.h>
-#include <stdlib.h>
 #include <stdint.h>
 
 #include "map.h"

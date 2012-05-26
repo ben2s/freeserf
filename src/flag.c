@@ -1,12 +1,9 @@
 /* flag.c */
 
-#include <stdio.h>
 #include <stdlib.h>
 
 #include "flag.h"
-#include "player.h"
 #include "list.h"
-#include "misc.h"
 
 #define SEARCH_MAX_DEPTH  0x10000
 

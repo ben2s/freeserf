@@ -3,8 +3,6 @@
 #ifndef _GFX_H
 #define _GFX_H
 
-#include <stdint.h>
-
 #include "SDL.h"
 
 
