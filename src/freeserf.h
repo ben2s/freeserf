@@ -3,11 +3,8 @@
 #ifndef _FREESERF_H
 #define _FREESERF_H
 
-#include <stdio.h>
-#include <stdlib.h>
 #include <stdint.h>
 
-#include "gfx.h"
 #include "map.h"
 
 #include "building.h"

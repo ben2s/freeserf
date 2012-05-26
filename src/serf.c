@@ -7,7 +7,6 @@
 #include "serf.h"
 #include "globals.h"
 #include "random.h"
-#include "viewport.h"
 #include "misc.h"
 #include "debug.h"
 

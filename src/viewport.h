@@ -3,8 +3,6 @@
 #ifndef _VIEWPORT_H
 #define _VIEWPORT_H
 
-#include "freeserf.h"
-#include "player.h"
 #include "gfx.h"
 #include "map.h"
 
