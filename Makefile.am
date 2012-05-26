@@ -19,7 +19,7 @@ freeserf_SOURCES = \
 	src/freeserf_endian.h \
 	src/version.h
 
-AM_CFLAGS = $(SDL_CFLAGS) -I$(top_builddir)/src
+AM_CFLAGS = $(SDL_CFLAGS) -Werror -I$(top_builddir)/src
 freeserf_LDADD = $(SDL_LIBS) $(SDL_CFLAGS) -lm
 
 #CLEANFILES = src/version.h
