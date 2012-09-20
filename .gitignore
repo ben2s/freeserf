@@ -1,0 +1,17 @@
+*.o
+*~
+.deps
+Makefile
+Makefile.in
+SPAE.PA
+aclocal.m4
+autom4te.cache
+config.h*
+config.log
+config.status
+configure
+depcomp
+freeserf
+install-sh
+missing
+stamp-h1
