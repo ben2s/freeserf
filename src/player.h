@@ -5,6 +5,7 @@
 
 #include <stdint.h>
 
+#include "freeserf.h"
 #include "gfx.h"
 
 
@@ -66,15 +67,15 @@ typedef struct {
 	int food_coalmine;
 	int food_ironmine;
 	int food_goldmine;
-	int tree_building; /* Tree delivery priority of tree. */
-	int tree_boat;
-	int tree_tool;
-	int steel_tool;
+	int planks_construction; /* Planks delivery priority. */
+	int planks_boatbuilder;
+	int planks_toolmaker;
+	int steel_toolmaker;
 	/* 150 */
-	int steel_weapon;
+	int steel_weaponsmith;
 	int coal_steelsmelter;
 	int coal_goldsmelter;
-	int coal_weapon;
+	int coal_weaponsmith;
 	int wheat_pigfarm;
 	int wheat_mill;
 	int current_sett_6_item;
@@ -107,7 +108,10 @@ typedef struct {
 	int ai_value_5;
 	/* 1AE */
 	int ai_intelligence;
-	/* 1E34 */
+	/* AC4 */
+	int player_stat_history[16][112];
+	int resource_count_history[26][120];
+	/* 1E34 ? */
 	int msg_queue_type[64];
 	map_pos_t msg_queue_pos[64];
 
@@ -193,6 +197,8 @@ typedef struct {
 	int field_D0;
 	/* D2 */
 	uint16_t last_anim;
+	int current_stat_8_mode;
+	int current_stat_7_item;
 	/* 1B4 */
 	/* Determines what sfx should be played. */
 	int water_in_view;
@@ -206,5 +212,17 @@ typedef struct {
 	int timer_icon_x;
 	/* ... */
 } player_t;
+
+
+void player_sett_reset_food_priority(player_sett_t *sett);
+void player_sett_reset_planks_priority(player_sett_t *sett);
+void player_sett_reset_steel_priority(player_sett_t *sett);
+void player_sett_reset_coal_priority(player_sett_t *sett);
+void player_sett_reset_wheat_priority(player_sett_t *sett);
+void player_sett_reset_tool_priority(player_sett_t *sett);
+
+void player_sett_reset_flag_priority(player_sett_t *sett);
+void player_sett_reset_inventory_priority(player_sett_t *sett);
+
 
 #endif /* ! _PLAYER_H */

@@ -1372,6 +1372,7 @@ draw_map_objects_row(map_pos_t pos, int y_base, int cols, int x_base, frame_t *f
 	}
 }
 
+/* Draw one individual serf in the row. */
 static void
 draw_row_serf(int x, int y, int shadow, int color, int body, frame_t *frame)
 {
@@ -1479,6 +1480,7 @@ draw_row_serf(int x, int y, int shadow, int color, int body, frame_t *frame)
 }
 
 /* Extracted from obsolete update_map_serf_rows(). */
+/* Translate serf type into the corresponding sprite code. */
 static int
 serf_get_body(serf_t *serf)
 {
@@ -1976,6 +1978,10 @@ serf_get_body(serf_t *serf)
 	return t;
 }
 
+/* Draw one row of serfs. The serfs are composed of two or three transparent
+   sprites (arm, torso, possibly head). A shadow is also drawn if appropriate. 
+   Note that idle serfs do not have a serf_t object so they are drawn seperately
+   from active serfs. */
 static void
 draw_serf_row(map_pos_t pos, int y_base, int cols, int x_base, frame_t *frame)
 {
@@ -2015,7 +2021,7 @@ draw_serf_row(map_pos_t pos, int y_base, int cols, int x_base, frame_t *frame)
 	};
 
 	for (int i = 0; i < cols; i++, x_base += MAP_TILE_WIDTH, pos = MAP_MOVE_RIGHT(pos)) {
-#ifndef NDEBUG
+#if 0
 		/* Draw serf marker */
 		if (MAP_SERF_INDEX(pos) != 0) {
 			gfx_fill_rect(x_base - 2, y_base - 4*MAP_HEIGHT(pos) - 2, 4, 4, 0x40, frame);
