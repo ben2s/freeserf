@@ -23,6 +23,7 @@
 #include "sdl-video.h"
 #include "misc.h"
 #include "debug.h"
+#include "log.h"
 
 /* TODO This file is one big of mess of all the things that should really
    be separated out into smaller files.  */
@@ -31,14 +32,13 @@
 #define DEFAULT_SCREEN_HEIGHT 600
 
 
+#define DEFAULT_GAME_SPEED 0x20000
+
+
 static unsigned int tick;
 static int update_from_cb;
 
 static int redraw_landscape;
-
-static frame_t lowres_full_frame;
-static frame_t game_area_lowres_frame;
-static frame_t lowres_normal_frame;
 
 static frame_t svga_full_frame;
 static frame_t game_area_svga_frame;
@@ -52,12 +52,6 @@ static viewport_t viewport;
 
 static char *game_file = NULL;
 
-
-static void
-write_and_swap()
-{
-	sdl_swap_buffers();
-}
 
 /* Facilitates quick lookup of offsets following a spiral pattern in the map data.
    The columns following the second are filled out by setup_spiral_pattern(). */
@@ -119,11 +113,11 @@ static void
 setup_spiral_pattern()
 {
 	static const int spiral_matrix[] = {
-		1,  0,  0,  1, 
+		1,  0,  0,  1,
 		1,  1, -1,  0,
 		0,  1, -1, -1,
 		-1,  0,  0, -1,
-		-1, -1,  1,  0, 
+		-1, -1,  1,  0,
 		0, -1,  1,  1
 	};
 
@@ -195,32 +189,6 @@ draw_bottom_frame()
 		-1
 	};
 
-#if 0
-	const int bottom_lowres_layout[] = {
-		0x6fa, 0, 200,
-		0x6f4, 40, 200,
-		0x708, 48, 200,
-		0x6fb, 64, 200,
-		0x6fc, 64, 236,
-		0x709, 96, 200,
-		0x6fd, 112, 200,
-		0x6fe, 112, 236,
-		0x70a, 144, 200,
-		0x6ff, 160, 200,
-		0x700, 160, 236,
-		0x70b, 192, 200,
-		0x701, 208, 200,
-		0x702, 208, 236,
-		0x70c, 240, 200,
-		0x703, 256, 200,
-		0x704, 256, 236,
-		0x70d, 288, 200,
-		0x6f5, 304, 200,
-		0x6fa, 312, 200,
-		-1
-	};
-#endif
-
 	/* TODO request full buffer swap */
 
 	frame_t *frame = NULL;
@@ -252,22 +220,22 @@ enqueue_sfx_clip(sfx_t sfx)
 {
 	switch (sfx) {
 	case SFX_MESSAGE:
-		printf("SOUND: MESSAGE\n");
+		LOGI("SOUND: MESSAGE");
 		break;
 	case SFX_NOT_ACCEPTED:
-		printf("SOUND: NOT ACCEPTED\n");
+		LOGI("SOUND: NOT ACCEPTED");
 		break;
 	case SFX_ACCEPTED:
-		printf("SOUND: ACCEPTED\n");
+		LOGI("SOUND: ACCEPTED");
 		break;
 	case SFX_CLICK:
-		printf("SOUND: CLICK\n");
+		LOGI("SOUND: CLICK");
 		break;
 	case SFX_AHHH:
-		printf("SOUND: AHHH\n");
+		LOGI("SOUND: AHHH");
 		break;
 	default:
-		printf("SOUND: OTHER (%i)\n", sfx);
+		LOGI("SOUND: OTHER (%i)", sfx);
 		break;
 	}
 	/*sdl_audio_play_sound(sfx);*/
@@ -417,8 +385,11 @@ draw_player_panel_btns(player_t *player)
 		int sprite = DATA_FRAME_BUTTON_BASE + new;
 
 		frame_t *frame;
-		if (BIT_TEST(globals.svga, 7)) frame = &svga_full_frame;
-		else frame = &lowres_full_frame;
+		if (1/*BIT_TEST(globals.svga, 7)*/) {
+			frame = &svga_full_frame;
+		} else {
+			/*frame = &lowres_full_frame;*/
+		}
 
 		gfx_draw_sprite(x, y, sprite, frame);
 	}
@@ -595,7 +566,7 @@ game_pause()
 {
 	globals.game_speed_save = globals.game_speed;
 	globals.game_speed = 0;
-	printf("Game speed: %u\n", globals.game_speed >> 16);
+	LOGI("Game speed: %u", globals.game_speed >> 16);
 }
 
 /* Unpause the game by restoring game speed. */
@@ -603,7 +574,7 @@ static void
 game_unpause()
 {
 	globals.game_speed = globals.game_speed_save;
-	printf("Game speed: %u\n", globals.game_speed >> 16);
+	LOGI("Game speed: %u", globals.game_speed >> 16);
 }
 
 #define GROUND_ANALYSIS_RADIUS  25
@@ -3081,12 +3052,11 @@ redraw_player_popups()
 	}
 }
 
-
 /* Initialize game speed. */
 static void
 start_game_tick()
 {
-	globals.game_speed = 0x20000;
+	globals.game_speed = DEFAULT_GAME_SPEED;
 	update_from_cb = 1;
 }
 
@@ -3150,46 +3120,6 @@ init_player_structs(player_t *p[])
 
 	/* Player 2 */
 	/* TODO */
-}
-
-/* Initialize players with lowres screen.
-   Not useful: Lowres frames are not used anymore. */
-static void
-init_players_lowres(player_t *p[])
-{
-	globals.frame = &game_area_lowres_frame;
-
-	p[0]->pointer_x_max = 344;
-	p[0]->pointer_y_max = 232;
-	p[0]->pointer_x_off = 0;
-
-	p[0]->game_area_cols = 20;
-	p[0]->game_area_rows = 16;
-	p[0]->bottom_panel_y = 200;
-
-	p[0]->frame_width = 320;
-	p[0]->frame_height = 192;
-
-	p[0]->col_offset = 9;
-	p[0]->row_offset = 8;
-	p[0]->map_min_x = 0;
-	p[0]->map_max_y = 230;
-
-	p[0]->panel_btns_x = 64;
-	p[0]->panel_btns_first_x = 64;
-	p[0]->panel_btns_dist = 48;
-	p[0]->msg_icon_x = 40;
-	p[0]->timer_icon_x = 304;
-
-	p[0]->popup_x = 112;
-	p[0]->popup_y = 33;
-
-	p[0]->map_x_off = 160;
-	p[0]->map_y_off = 156;
-	p[0]->map_cursor_col_max = 40;
-	p[0]->map_cursor_col_off = 20;
-
-	p[0]->frame = &lowres_normal_frame;
 }
 
 /* Initialize player viewport. */
@@ -3264,8 +3194,11 @@ init_players()
 	if (/* split mode */ 0) {
 	} else {
 		globals.player[1]->flags |= 1;
-		if (BIT_TEST(globals.svga, 7)) init_players_svga(globals.player);
-		else init_players_lowres(globals.player);
+		if (BIT_TEST(globals.svga, 7)) {
+			init_players_svga(globals.player);
+		} else {
+			/*init_players_lowres(globals.player);*/
+		}
 	}
 }
 
@@ -3617,7 +3550,7 @@ init_map_vars()
 	/* globals.split |= BIT(3); */
 
 	if (globals.map_cols < 64 || globals.map_rows < 64) {
-		/* globals.split &= ~BIT(3); */		
+		/* globals.split &= ~BIT(3); */
 	}
 
 	globals.map_col_pairs = globals.map_cols >> 1;
@@ -3685,7 +3618,7 @@ init_ai_values(player_sett_t *sett, int face)
 static void
 reset_player_settings()
 {
-	globals.winning_player = -1;	
+	globals.winning_player = -1;
 	/* TODO ... */
 	globals.field_286 = 33;
 
@@ -3709,7 +3642,7 @@ reset_player_settings()
 			/* sett->field_163 = 0; */
 			sett->build = 0;
 			/*sett->field_163 |= BIT(0);*/
-			
+
 			sett->map_cursor_col = 0;
 			sett->map_cursor_row = 0;
 			sett->map_cursor_type = 0;
@@ -3819,7 +3752,7 @@ init_game_globals()
 }
 
 /* Update global anim counters based on game_tick.
-   Note: anim counters control the rate of updates in 
+   Note: anim counters control the rate of updates in
    the rest of the game objects (_not_ just gfx animations). */
 static void
 anim_update_and_more()
@@ -4258,7 +4191,7 @@ determine_map_cursor_type_road(player_t *player)
 					   MAP_PATHS(map_pos[1+i]) == 0) {
 					int h_diff = MAP_HEIGHT(map_pos[1+i]) - h;
 					sprite = 39 + h_diff; /* height indicators */
-					bits |= BIT(i);					
+					bits |= BIT(i);
 				} else {
 					panel_btn_t panel_btn;
 					int build_flags, cursor_type, height_after_level;
@@ -4339,7 +4272,7 @@ update_panel_btns_and_map_cursor(player_t *player)
 				case 5:
 					if (player->sett->panel_btn_type < PANEL_BTN_BUILD_MINE) {
 						/* TODO */
-						printf("cursor type: unhandled 5 case\n");
+						LOGD("cursor type: unhandled 5 case\n");
 					} else {
 						player->panel_btns[0] = player->sett->panel_btn_type;
 						player->panel_btns[1] = PANEL_BTN_DESTROY_INACTIVE;
@@ -5144,7 +5077,7 @@ build_flag(player_t *player)
 	if (r < 0) return;
 
 	flag->path_con = player->sett->player_num << 6;
-	
+
 	map_pos_t map_cursor_pos = MAP_POS(player->sett->map_cursor_col, player->sett->map_cursor_row);
 	map_1_t *map = globals.map_mem2_ptr;
 	map_2_t *map_data = MAP_2_DATA(map);
@@ -5351,7 +5284,7 @@ build_advanced_building(player_t *player)
 		} else {
 			build_building(player, MAP_OBJ_LARGE_BUILDING);
 		}
-	}	
+	}
 }
 
 /* Spawn new serf. Returns 0 on success.
@@ -5867,7 +5800,7 @@ building_demolish(map_pos_t pos)
 		update_land_ownership(MAP_COORD_ARGS(building->pos));
 	}
 
-	if (BUILDING_IS_DONE(building) && 
+	if (BUILDING_IS_DONE(building) &&
 	    (BUILDING_TYPE(building) == BUILDING_CASTLE ||
 	     BUILDING_TYPE(building) == BUILDING_STOCK)) {
 		/* Cancel resources in the out queue and remove gold
@@ -6022,6 +5955,310 @@ building_demolish(map_pos_t pos)
 	}
 }
 
+static int
+remove_road_backref_until_flag(map_pos_t pos, dir_t dir)
+{
+	map_1_t *map = globals.map_mem2_ptr;
+
+	while (1) {
+		pos = MAP_MOVE(pos, dir);
+
+		/* Clear backreference */
+		map[pos].flags &= ~BIT(DIR_REVERSE(dir));
+
+		if (MAP_OBJ(pos) == MAP_OBJ_FLAG) break;
+
+		/* Find next direction of path. */
+		dir = -1;
+		for (dir_t d = DIR_RIGHT; d <= DIR_UP; d++) {
+			if (BIT_TEST(MAP_PATHS(pos), d)) {
+				dir = d;
+				break;
+			}
+		}
+
+		if (dir == -1) return -1;
+	}
+
+	return 0;
+}
+
+static int
+remove_road_backrefs(map_pos_t pos)
+{
+	if (MAP_PATHS(pos) == 0) return -1;
+
+	/* Find directions of path segments to be split. */
+	dir_t path_1_dir = -1;
+	for (dir_t d = DIR_RIGHT; d <= DIR_UP; d++) {
+		if (BIT_TEST(MAP_PATHS(pos), d)) {
+			path_1_dir = d;
+			break;
+		}
+	}
+
+	dir_t path_2_dir = -1;
+	for (dir_t d = path_1_dir+1; d <= DIR_UP; d++) {
+		if (BIT_TEST(MAP_PATHS(pos), d)) {
+			path_2_dir = d;
+			break;
+		}
+	}
+
+	if (path_1_dir == -1 || path_2_dir == -1) return -1;
+
+	int r = remove_road_backref_until_flag(pos, path_1_dir);
+	if (r < 0) return -1;
+
+	r = remove_road_backref_until_flag(pos, path_2_dir);
+	if (r < 0) return -1;
+
+	return 0;
+}
+
+static int
+path_serf_idle_to_wait_state(map_pos_t pos)
+{
+	/* Look through serf array for the corresponding serf. */
+	for (int i = 1; i < globals.max_ever_serf_index; i++) {
+		if (BIT_TEST(globals.serfs_bitmap[i>>3], 7-(i&7))) {
+			serf_t *serf = get_serf(i);
+			if (serf->pos == pos &&
+			    (serf->state == SERF_STATE_IDLE_ON_PATH ||
+			     serf->state == SERF_STATE_WAIT_IDLE_ON_PATH ||
+			     serf->state == SERF_STATE_WAKE_AT_FLAG ||
+			     serf->state == SERF_STATE_WAKE_ON_PATH)) {
+				serf_log_state_change(serf, SERF_STATE_WAKE_AT_FLAG);
+				serf->state = SERF_STATE_WAKE_AT_FLAG;
+				return 0;
+			}
+		}
+	}
+
+	return -1;
+}
+
+static void
+lose_transported_resource(resource_type_t res, uint dest)
+{
+	static const int stock_type[] = {
+		0, 0, 0, 0, 0, 0,
+		1, 0, -1, 1, 1, 1,
+		0, 1, 1, -1, -1, -1,
+		-1, -1, -1, -1, -1, -1,
+		-1, -1, -1
+	};
+
+	if (res == RESOURCE_GOLDORE ||
+	    res == RESOURCE_GOLDBAR) {
+		globals.map_gold_deposit -= 1;
+	}
+
+	if (stock_type[res] >= 0 && dest != 0) {
+		flag_t *flag = get_flag(dest);
+		building_t *building = flag->other_endpoint.b[DIR_UP_LEFT];
+		if (!(BUILDING_IS_DONE(building) &&
+		      (BUILDING_TYPE(building) == BUILDING_CASTLE ||
+		       BUILDING_TYPE(building) == BUILDING_STOCK))) {
+			if (stock_type[res] == 0) building->stock1 -= 1;
+			else building->stock2 -= 1;
+		}
+	}
+}
+
+
+/* ADDITION: Removed precondition that serf is in state walking or transporting. */
+static void
+mark_serf_as_lost(serf_t *serf)
+{
+	if (serf->state == SERF_STATE_WALKING) {
+		if (serf->s.walking.res >= 0) {
+			if (serf->s.walking.res != 6) {
+				dir_t dir = serf->s.walking.res;
+				flag_t *flag = get_flag(serf->s.walking.dest);
+				flag->length[dir] &= ~BIT(7);
+
+				dir_t other_dir = (flag->other_end_dir[dir] >> 3) & 7;
+				flag->other_endpoint.f[dir]->length[other_dir] &= ~BIT(7);
+			}
+		} else if (serf->s.walking.res == -1) {
+			flag_t *flag = get_flag(serf->s.walking.dest);
+			building_t *building = flag->other_endpoint.b[DIR_UP_LEFT];
+
+			if (BIT_TEST(building->serf, 7)) {
+				building->serf &= ~BIT(7);
+			} else if (building->stock1 != 0xff) {
+				building->stock1 -= 1;
+				if (building->stock1 < 0) building->stock1 = 0xff; /* Should probably just be a signed int. */
+			}
+		}
+
+		serf_log_state_change(serf, SERF_STATE_LOST);
+		serf->state = SERF_STATE_LOST;
+		serf->s.lost.field_B = 0;
+	} else if (serf->state == SERF_STATE_TRANSPORTING ||
+		   serf->state == SERF_STATE_DELIVERING) {
+		if (serf->s.walking.res != 0) {
+			int res = serf->s.walking.res-1;
+			int dest = serf->s.walking.dest;
+
+			lose_transported_resource(res, dest);
+		}
+
+		if (serf->type != SERF_SAILOR) {
+			serf_log_state_change(serf, SERF_STATE_LOST);
+			serf->state = SERF_STATE_LOST;
+			serf->s.lost.field_B = 0;
+		} else {
+			serf_log_state_change(serf, SERF_STATE_26);
+			serf->state = SERF_STATE_26;
+		}
+	}
+}
+
+static void
+remove_road_forwards(map_pos_t pos, dir_t dir)
+{
+	map_1_t *map = globals.map_mem2_ptr;
+
+	while (1) {
+		if (MAP_IDLE_SERF(pos)) {
+			path_serf_idle_to_wait_state(pos);
+		}
+
+		if (MAP_SERF_INDEX(pos) != 0) {
+			serf_t *serf = get_serf(MAP_SERF_INDEX(pos));
+			if (!MAP_HAS_FLAG(pos)) {
+				mark_serf_as_lost(serf);
+			} else {
+				/* Handle serf close to flag, where
+				   it should only be lost if walking
+				   in the wrong direction. */
+				int d = serf->s.walking.dir;
+				if (d < 0) d += 6;
+				if (d == DIR_REVERSE(dir)) {
+					mark_serf_as_lost(serf);
+				}
+			}
+		}
+
+		if (MAP_HAS_FLAG(pos)) {
+			flag_t *flag = get_flag(MAP_OBJ_INDEX(pos));
+			dir_t rev_dir = DIR_REVERSE(dir);
+
+			flag->path_con &= ~BIT(rev_dir);
+			flag->transporter &= ~BIT(rev_dir);
+			flag->endpoint &= ~BIT(rev_dir);
+
+			if (BIT_TEST(flag->length[rev_dir], 7)) {
+				flag->length[rev_dir] &= ~BIT(7);
+
+				for (int i = 1; i < globals.max_ever_serf_index; i++) {
+					if (BIT_TEST(globals.serfs_bitmap[i>>3], 7-(i&7))) {
+						int dest = MAP_OBJ_INDEX(pos);
+						serf_t *serf = get_serf(i);
+
+						switch (serf->state) {
+						case SERF_STATE_WALKING:
+							if (serf->s.walking.dest == dest &&
+							    serf->s.walking.res == rev_dir) {
+								serf->s.walking.res = 0xfe;
+								serf->s.walking.dest = 0;
+							}
+							break;
+						case SERF_STATE_READY_TO_LEAVE_INVENTORY:
+							if (serf->s.ready_to_leave_inventory.dest == dest &&
+							    serf->s.ready_to_leave_inventory.mode == rev_dir) {
+								serf->s.ready_to_leave_inventory.dest = 0xfe;
+								serf->s.ready_to_leave_inventory.dest = 0;
+							}
+							break;
+						case SERF_STATE_LEAVING_BUILDING:
+						case SERF_STATE_READY_TO_LEAVE:
+							if (serf->s.leaving_building.dest == dest &&
+							    serf->s.leaving_building.field_B == rev_dir &&
+							    serf->s.leaving_building.next_state == SERF_STATE_WALKING) {
+								serf->s.leaving_building.field_B = 0xfe;
+								serf->s.leaving_building.dest = 0;
+							}
+							break;
+						}
+					}
+				}
+			}
+
+			flag->other_end_dir[rev_dir] &= 0x78;
+
+			/* Mark resource path for recalculation if they would
+			   have followed the removed path. */
+			for (int i = 0; i < 8; i++) {
+				if (flag->res_waiting[i] != 0 &&
+				    (flag->res_waiting[i] >> 5) == rev_dir+1) {
+					flag->res_waiting[i] &= 0x1f;
+					flag->endpoint |= BIT(7);
+				}
+			}
+			break;
+		}
+
+		/* Clear forward reference. */
+		map[pos].flags &= ~BIT(dir);
+		pos = MAP_MOVE(pos, dir);
+
+		/* Clear backreference. */
+		map[pos].flags &= ~BIT(DIR_REVERSE(dir));
+
+		/* Find next direction of path. */
+		dir = -1;
+		for (dir_t d = DIR_RIGHT; d <= DIR_UP; d++) {
+			if (BIT_TEST(MAP_PATHS(pos), d)) {
+				dir = d;
+				break;
+			}
+		}
+	}
+}
+
+/* Demolish road at position. */
+static void
+road_demolish(map_pos_t pos)
+{
+	globals.player[0]->flags |= BIT(4);
+	globals.player[1]->flags |= BIT(4);
+
+	int r = remove_road_backrefs(pos);
+	if (r < 0) {
+		/* TODO */
+	}
+
+	/* Find directions of path segments to be split. */
+	dir_t path_1_dir = -1;
+	for (dir_t d = DIR_RIGHT; d <= DIR_UP; d++) {
+		if (BIT_TEST(MAP_PATHS(pos), d)) {
+			path_1_dir = d;
+			break;
+		}
+	}
+
+	dir_t path_2_dir = -1;
+	for (dir_t d = path_1_dir+1; d <= DIR_UP; d++) {
+		if (BIT_TEST(MAP_PATHS(pos), d)) {
+			path_2_dir = d;
+			break;
+		}
+	}
+
+	/* If last segment direction is UP LEFT it could
+	   be to a building and the real path is at UP. */
+	if (path_2_dir == DIR_UP_LEFT &&
+	    BIT_TEST(MAP_PATHS(pos), DIR_UP)) {
+		path_2_dir = DIR_UP;
+	}
+
+	remove_road_forwards(pos, path_1_dir);
+	remove_road_forwards(pos, path_2_dir);
+}
+
 static void
 do_demolish(player_t *player)
 {
@@ -6058,7 +6295,7 @@ handle_panel_btn_click(player_t *player, int btn)
 		case PANEL_BTN_MAP_STARRED:
 			enqueue_sfx_clip(SFX_CLICK);
 			/* TODO */
-			printf("map\n");
+			LOGD("map");
 			break;
 		case PANEL_BTN_SETT:
 		case PANEL_BTN_SETT_STARRED:
@@ -6202,8 +6439,23 @@ handle_panel_btn_click(player_t *player, int btn)
 			}
 			break;
 		case PANEL_BTN_DESTROY_ROAD:
-			/* TODO */
-			printf("destroy road\n");
+			if (BIT_TEST(player->click, 3)) { /* Special click */
+				/* TODO */
+			} else {
+				player->flags &= ~BIT(6);
+				determine_map_cursor_type(player);
+				if (player->sett->map_cursor_type == 4) {
+					enqueue_sfx_clip(SFX_ACCEPTED);
+					player->click |= BIT(2);
+
+					map_pos_t cursor_pos = MAP_POS(player->sett->map_cursor_col,
+								       player->sett->map_cursor_row);
+					road_demolish(cursor_pos);
+				} else {
+					enqueue_sfx_clip(SFX_NOT_ACCEPTED);
+					update_panel_btns_and_map_cursor(player);
+				}
+			}
 			break;
 		case PANEL_BTN_GROUND_ANALYSIS:
 		case PANEL_BTN_GROUND_ANALYSIS_STARRED:
@@ -6213,7 +6465,7 @@ handle_panel_btn_click(player_t *player, int btn)
 			} else {
 				if (BIT_TEST(globals.split, 6)) { /* Coop mode */
 					/* TODO */
-				}				
+				}
 				player->flags &= ~BIT(6);
 				player->click |= BIT(6);
 				player->panel_btns[0] = PANEL_BTN_BUILD_INACTIVE;
@@ -6227,7 +6479,7 @@ handle_panel_btn_click(player_t *player, int btn)
 			break;
 		case PANEL_BTN_BUILD_INACTIVE:
 			/* TODO */
-			printf("build inactive\n");
+			LOGD("build inactive");
 			break;
 	}
 }
@@ -6571,7 +6823,7 @@ promote_serfs_to_knights(player_sett_t *sett, int number)
 		}
 	}
 
-	return promoted;		
+	return promoted;
 }
 
 static void
@@ -7128,7 +7380,7 @@ handle_clickmap(player_t *player, int x, int y, const int clkmap[])
 				close_box(player);
 				break;
 			default:
-				printf("unhandled action %i\n", action);
+				LOGW("unhandled action %i", action);
 				break;
 			}
 			return 0;
@@ -7735,7 +7987,7 @@ handle_popup_click(player_t *player, int x, int y)
 		handle_box_demolish_clk(player, x, y);
 		break;
 	default:
-		printf("unhandled box: %i\n", player->clkmap);
+		LOGW("unhandled box: %i", player->clkmap);
 		break;
 	}
 }
@@ -8121,7 +8373,7 @@ handle_player_click_and_update(player_t *player)
 
 		/* Extracted from a small function 42059 */
 		if (!BIT_TEST(player->click, 7)) { /* Not building road */
-			determine_map_cursor_type(player);		
+			determine_map_cursor_type(player);
 		} else { /* Building road */
 			determine_map_cursor_type_road(player);
 		}
@@ -8428,7 +8680,7 @@ update_ai_and_more()
 
 						for (int i = 0; i < n; i++) {
 							if (max_prio[i] > 0) {
-								printf(" dest for inventory %i found\n", i);
+								LOGD(" dest for inventory %i found", i);
 								building_t *dest_bld = flags[i]->other_endpoint.b[DIR_UP_LEFT];
 								inventory_t *src_inv = invs[i];
 								if (arr[0] == 66) {
@@ -8458,11 +8710,11 @@ update_ai_and_more()
 								/* Put resource in out queue */
 								src_inv->resources[res] -= 1;
 								if (src_inv->out_queue[0] == -1) {
-									printf(" added resource %i to front of queue\n", res);
+									LOGD(" added resource %i to front of queue", res);
 									src_inv->out_queue[0] = res;
 									src_inv->out_dest[0] = dest_bld->flg_index;
 								} else {
-									printf(" added resource %i next in queue\n", res);
+									LOGD(" added resource %i next in queue", res);
 									src_inv->out_queue[1] = res;
 									src_inv->out_dest[1] = dest_bld->flg_index;
 								}
@@ -8631,20 +8883,20 @@ update_flags_search_cb(flag_t *flag, update_flags_search_data_t *data)
 {
 	flag_t *src = data->src;
 	if (flag == data->dest) {
-		printf("update flags: dest found: %i\n", flag->search_dir);
+		LOGD("update flags: dest found: %i", flag->search_dir);
 
 		if (flag->search_dir != 6) {
 			int other_dir = src->other_end_dir[flag->search_dir];
 			if (!BIT_TEST(other_dir, 7)) {
 				src->other_end_dir[flag->search_dir] = BIT(7) | (src->other_end_dir[flag->search_dir] & 0x78) | data->res;
-				printf("update flags: item %i is requesting fetch\n", data->res);				
+				LOGD("update flags: item %i is requesting fetch", data->res);
 			} else {
 				player_sett_t *sett = globals.player_sett[(flag->path_con >> 6) & 3];
 				int prio_old = sett->flag_prio[(src->res_waiting[other_dir & 7] & 0x1f)-1];
 				int prio_new = sett->flag_prio[(src->res_waiting[data->res] & 0x1f)-1];
 				if (prio_new > prio_old) {
 					src->other_end_dir[flag->search_dir] = (src->other_end_dir[flag->search_dir] & 0xf8) | data->res;
-					printf("update flags: item %i has priority now\n", data->res);
+					LOGD("update flags: item %i has priority now", data->res);
 				}
 				src->res_waiting[data->res] = ((flag->search_dir + 1) << 5) | (src->res_waiting[data->res] & 0x1f);
 			}
@@ -8794,7 +9046,7 @@ update_flags()
 												    (flag_search_func *)update_flags_search_cb,
 												    1, &data);
 									if (r < 0 || data.dest->search_dir == 6) {
-										printf("update flags: unable to deliver.\n");
+										LOGD("update flags: unable to deliver.");
 										flag_cancel_transported_stock(data.dest, flag->res_waiting[slot] & 0x1f);
 										flag->res_dest[slot] = 0;
 										flag->endpoint |= BIT(7);
@@ -8818,7 +9070,7 @@ update_flags()
 											    (flag_search_func *)update_flags_search2_cb,
 											    1, &data);
 									if (data.flag != NULL) {
-										printf("dest for flag %u res %i found: flag %u\n",
+										LOGD("dest for flag %u res %i found: flag %u",
 										       FLAG_INDEX(flag), slot, FLAG_INDEX(data.flag));
 										building_t *dest_bld = data.flag->other_endpoint.b[DIR_UP_LEFT];
 										int prio = (arr2[2*res+1] == 66) ? data.flag->stock1_prio :
@@ -9014,7 +9266,7 @@ update_unfinished_adv_building(building_t *building)
 			BIT_TEST(building->serf, 7)) {
 		return;
 	}
-	
+
 	/* TODO */
 
 	if (!BIT_TEST(building->serf, 2)) {
@@ -9272,7 +9524,7 @@ handle_building_update(building_t *building)
 				} else {
 					building->u.flag->stock2_prio = 0;
 				}
-			}			
+			}
 			break;
 		}
 		case BUILDING_FARM:
@@ -9504,7 +9756,7 @@ handle_building_update(building_t *building)
 				} else {
 					building->u.flag->stock2_prio = 0;
 				}
-			}			
+			}
 			break;
 		}
 		case BUILDING_FORTRESS:
@@ -9577,7 +9829,7 @@ handle_building_update(building_t *building)
 				} else {
 					building->u.flag->stock2_prio = 0;
 				}
-			}			
+			}
 			break;
 		}
 		case BUILDING_GOLDSMELTER:
@@ -9655,6 +9907,9 @@ handle_building_update(building_t *building)
 static void
 update_buildings()
 {
+	map_1_t *map = globals.map_mem2_ptr;
+	map_2_t *map_data = MAP_2_DATA(globals.map_mem2_ptr);
+
 	if (globals.next_index >= 32) return;
 
 	int index = globals.next_index << 5;
@@ -9667,8 +9922,18 @@ update_buildings()
 				if (building->serf_index >= delta) {
 					building->serf_index -= delta;
 				} else {
-					/* TODO */
-					building->serf_index = 0;
+					/* 2355E */
+					map_pos_t pos = building->pos;
+					int p = building->u.s.planks_needed;
+
+					map[pos].flags &= ~BIT(6);
+					map[pos].obj &= 0x80;
+					map_data[pos].u.index = 0;
+					free_building(i);
+
+					if ((p & 0x1f) != 0) {
+						/* TODO */
+					}
 				}
 			} else {
 				handle_building_update(building);
@@ -10187,7 +10452,7 @@ load_v0_serf_state(FILE *f)
 		serf->anim = *(uint16_t *)&serf_data[8];
 		serf->state = serf_data[10];
 
-		printf("load serf %i: %s\n", i, serf_get_state_name(serf->state));
+		LOGD("load serf %i: %s", i, serf_get_state_name(serf->state));
 
 		switch (serf->state) {
 		case SERF_STATE_IDLE_IN_STOCK:
@@ -10576,6 +10841,7 @@ load_v0_state(FILE *f)
 	if (r < 0) return -1;
 
 	globals.game_speed = 0;
+	globals.game_speed_save = DEFAULT_GAME_SPEED;
 
 	return 0;
 }
@@ -10591,7 +10857,7 @@ load_map_spec()
 			.rnd_1 = 0x6d6f,
 			.rnd_2 = 0xf7f0,
 			.rnd_3 = 0xc8d4,
-			
+
 			.pl_0_supplies = 35,
 			.pl_0_reproduction = 30,
 
@@ -10775,7 +11041,7 @@ game_loop_iter()
 	gfx_draw_number(80, 340, 47, 1, sdl_get_screen_frame(), MAP_OBJ(cursor_pos));
 #endif
 
-	write_and_swap();
+	sdl_swap_buffers();
 }
 
 
@@ -10865,16 +11131,16 @@ game_loop()
 				case SDLK_PLUS:
 				case SDLK_KP_PLUS:
 					if (globals.game_speed < 0xffff0000) globals.game_speed += 0x10000;
-					printf("Game speed: %u\n", globals.game_speed >> 16);
+					LOGI("Game speed: %u", globals.game_speed >> 16);
 					break;
 				case SDLK_MINUS:
 				case SDLK_KP_MINUS:
 					if (globals.game_speed >= 0x10000) globals.game_speed -= 0x10000;
-					printf("Game speed: %u\n", globals.game_speed >> 16);
+					LOGI("Game speed: %u", globals.game_speed >> 16);
 					break;
 				case SDLK_0:
 					globals.game_speed = 0x20000;
-					printf("Game speed: %u\n", globals.game_speed >> 16);
+					LOGI("Game speed: %u", globals.game_speed >> 16);
 					break;
 				case SDLK_p:
 					if (globals.game_speed == 0) game_unpause();
@@ -10966,13 +11232,13 @@ pregame_continue()
 	if (game_file != NULL) {
 		FILE *f = fopen(game_file, "rb");
 		if (f == NULL) {
-			fprintf(stderr, "Unable to open save game file: `%s'.", game_file);
+			LOGE("Unable to open save game file: `%s'.", game_file);
 			exit(EXIT_FAILURE);
 		}
 
 		int r = load_v0_state(f);
 		if (r < 0) {
-			fprintf(stderr, "Unable to load save game.\n");
+			LOGE("Unable to load save game.");
 			exit(EXIT_FAILURE);
 		}
 	}
@@ -10983,10 +11249,11 @@ pregame_continue()
 		map_2_t *map_data = MAP_2_DATA(map);
 		for (int j = 0; j < globals.map_cols; j++) {
 			map_pos_t pos = MAP_POS(j, i);
-			printf("% 3i, % 3i:  ", j, i);
-			printf("%02x %02x %02x %02x    ", map[pos].flags, map[pos].height, map[pos].type, map[pos].obj);
-			printf("%04x %04x  ", map_data[pos].u.index, map_data[pos].serf_index);
-			printf("H(%i)\n", map[pos].height & 0x1f);
+			LOGD("% 3i, % 3i:  %02x %02x %02x %02x    %04x %04x  H(%i)",
+			    j, i,
+			    map[pos].flags, map[pos].height, map[pos].type, map[pos].obj,
+			    map_data[pos].u.index, map_data[pos].serf_index,
+			    map[pos].height & 0x1f);
 
 			const char *name_from_dir[] = { "right", "down right", "down" };
 
@@ -10994,7 +11261,7 @@ pregame_continue()
 				map_pos_t other_pos = MAP_MOVE(pos, d);
 				int h_diff = MAP_HEIGHT(pos) - MAP_HEIGHT(other_pos);
 				if (h_diff < -4 || h_diff > 4) {
-					printf("h_diff fail: %s, (%i, %i, %i) -> (%i, %i, %i)\n",
+					LOGD("h_diff fail: %s, (%i, %i, %i) -> (%i, %i, %i)",
 					       name_from_dir[d],
 					       MAP_COORD_ARGS(pos), MAP_HEIGHT(pos),
 					       MAP_COORD_ARGS(other_pos), MAP_HEIGHT(other_pos));
@@ -11041,7 +11308,7 @@ pregame_init()
 	/* TODO unknown function ... */
 
 	/* mouse setup */
-	
+
 	setup_spiral_pattern();
 
 	/* sound and joystick setup */
@@ -11069,13 +11336,13 @@ static void
 hand_out_memory_2()
 {
 	/* TODO ... */
-	
+
 	/* hand out memory */
 
 	/* Player structs */
 	globals.player[0] = malloc(sizeof(player_t));
 	if (globals.player[0] == NULL) abort();
-	
+
 	globals.player[1] = malloc(sizeof(player_t));
 	if (globals.player[1] == NULL) abort();
 
@@ -11173,8 +11440,10 @@ hand_out_memory_2()
 
 	frame_t *screen = sdl_get_screen_frame();
 
+	/*
 	sdl_frame_init(&lowres_full_frame, 0, 0, 352, 240, screen);
 	sdl_frame_init(&lowres_normal_frame, 16, 8, 320, 192, screen);
+	*/
 
 	/* TODO ...*/
 
@@ -11185,7 +11454,7 @@ hand_out_memory_2()
 
 	/* TODO ... */
 
-	sdl_frame_init(&game_area_lowres_frame, 0, 0, 352, 192, screen);
+	/*sdl_frame_init(&game_area_lowres_frame, 0, 0, 352, 192, screen);*/
 	sdl_frame_init(&game_area_svga_frame, 0, 0, sdl_frame_get_width(screen),
 		       sdl_frame_get_height(screen), screen);
 
@@ -11227,7 +11496,6 @@ typedef struct {
 } audio_clip_t;
 
 audio_clip_t audio_clip;
-
 
 #define USAGE					\
 	"Usage: %s [-g DATA-FILE]\n"
@@ -11271,7 +11539,7 @@ main(int argc, char *argv[])
 			strcpy(data_file, optarg);
 			break;
 		case 'h':
-			printf(HELP, argv[0]);
+			LOGI(HELP, argv[0]);
 			exit(EXIT_SUCCESS);
 			break;
 		case 'l':
@@ -11288,7 +11556,7 @@ main(int argc, char *argv[])
 		case 'r':
 		{
 			char *hstr = strchr(optarg, 'x');
-			if (hstr == NULL) printf(USAGE, argv[0]);
+			if (hstr == NULL) LOGI(USAGE, argv[0]);
 			screen_width = atoi(optarg);
 			screen_height = atoi(hstr+1);
 		}
@@ -11297,7 +11565,7 @@ main(int argc, char *argv[])
 			map_generator = atoi(optarg);
 			break;
 		default:
-			printf(USAGE, argv[0]);
+			LOGE(USAGE, argv[0]);
 			exit(EXIT_FAILURE);
 			break;
 		}
@@ -11310,19 +11578,19 @@ main(int argc, char *argv[])
 		strcpy(data_file, "SPAE.PA");
 	}
 
-	fprintf(stderr, "Loading game data from `%s'...\n", data_file);
+	LOGE("Loading game data from `%s'...", data_file);
 
 	r = gfx_load_file(data_file);
 	if (r < 0) {
-		perror("gfx_load_file");
+		LOGE("Could not load game data.");
 		exit(EXIT_FAILURE);
 	}
 
 	free(data_file);
 
 	gfx_data_fixup();
-	
-	fprintf(stderr, "SDL init...\n");
+
+	LOGE("SDL init...");
 
 	r = sdl_init();
 	if (r < 0) exit(EXIT_FAILURE);
@@ -11330,7 +11598,7 @@ main(int argc, char *argv[])
 	/*gfx_set_palette(DATA_PALETTE_INTRO);*/
 	gfx_set_palette(DATA_PALETTE_GAME);
 
-	fprintf(stderr, "SDL resolution %ix%i...\n", screen_width, screen_height);
+	LOGE("SDL resolution %ix%i...\n", screen_width, screen_height);
 
 	r = sdl_set_resolution(screen_width, screen_height, fullscreen);
 	if (r < 0) exit(EXIT_FAILURE);
@@ -11348,6 +11616,6 @@ main(int argc, char *argv[])
 	/* Clean up */
 	sdl_deinit();
 	gfx_unload();
-	
+
 	return EXIT_SUCCESS;
 }
