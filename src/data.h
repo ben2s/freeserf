@@ -1,7 +1,37 @@
-/* data.h */
+/*
+ * data.h - Definitions for data file access.
+ *
+ * Copyright (C) 2012-2014  Jon Lund Steffensen <jonlst@gmail.com>
+ *
+ * This file is part of freeserf.
+ *
+ * freeserf is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * freeserf is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with freeserf.  If not, see <http://www.gnu.org/licenses/>.
+ */
 
 #ifndef _DATA_H
 #define _DATA_H
+
+#include "misc.h"
+
+#ifdef HAVE_CONFIG_H
+# include <config.h>
+#endif
+
+#ifdef HAVE_STDINT_H
+#include <stdint.h>
+#endif
+#include <sys/types.h>
 
 /* Index 0 is undefined (entry 0 in the data file
    contains a header with the size and total
@@ -208,5 +238,22 @@
 
 #define DATA_CURSOR  3999
 
+
+/* Sprite header. In the data file this is immediately followed by sprite data. */
+typedef struct {
+	int8_t b_x;
+	int8_t b_y;
+	uint16_t w;
+	uint16_t h;
+	int16_t x;
+	int16_t y;
+} dos_sprite_t;
+
+
+int data_load(const char *path);
+void data_unload();
+
+void *data_get_object(uint index, size_t *size);
+const dos_sprite_t *data_get_dos_sprite(uint index);
 
 #endif /* ! _DATA_H */

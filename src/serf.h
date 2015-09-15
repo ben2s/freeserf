@@ -1,22 +1,38 @@
-/* serf.h */
+/*
+ * serf.h - Serf related functions
+ *
+ * Copyright (C) 2013  Jon Lund Steffensen <jonlst@gmail.com>
+ *
+ * This file is part of freeserf.
+ *
+ * freeserf is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * freeserf is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with freeserf.  If not, see <http://www.gnu.org/licenses/>.
+ */
 
 #ifndef _SERF_H
 #define _SERF_H
 
-#include <stdint.h>
-
 #include "map.h"
-#include "misc.h"
-#include "log.h"
 
-#define SERF_INDEX(ptr)    ((int)((ptr) - globals.serfs))
+#define SERF_INDEX(ptr)    ((int)((ptr) - game.serfs))
+#define SERF_ALLOCATED(i)  BIT_TEST(game.serf_bitmap[(i)>>3], 7-((i)&7))
 
 #define SERF_PLAYER(serf)  ((int)((serf)->type & 3))
 #define SERF_TYPE(serf)    ((serf_type_t)(((serf)->type >> 2) & 0x1f))
 
 
 #define serf_log_state_change(serf, new_state)	\
-	LOGD("serf %i: state %s -> %s (%s:%i)", SERF_INDEX(serf), \
+	LOGV("serf", "serf %i: state %s -> %s (%s:%i)", SERF_INDEX(serf), \
 	     serf_get_state_name((serf)->state),			\
 	     serf_get_state_name((new_state)), __FUNCTION__, __LINE__)
 
@@ -26,7 +42,7 @@ typedef enum {
 	SERF_SAILOR,
 	SERF_DIGGER,
 	SERF_BUILDER,
-	SERF_4,
+	SERF_TRANSPORTER_INVENTORY,
 	SERF_LUMBERJACK,
 	SERF_SAWMILLER,
 	SERF_STONECUTTER,
@@ -48,9 +64,13 @@ typedef enum {
 	SERF_KNIGHT_1,
 	SERF_KNIGHT_2,
 	SERF_KNIGHT_3,
-	SERF_KNIGHT_4
+	SERF_KNIGHT_4,
+	SERF_DEAD
 } serf_type_t;
 
+/* The term FREE is used loosely in the following
+   names to denote a state where the serf is not
+   bound to a road or a flag. */
 typedef enum {
 	SERF_STATE_NULL = 0,
 	SERF_STATE_IDLE_IN_STOCK,
@@ -74,12 +94,12 @@ typedef enum {
 	SERF_STATE_PLANNING_PLANTING,
 	SERF_STATE_PLANTING, /* 20 */
 	SERF_STATE_PLANNING_STONECUTTING,
-	SERF_STATE_22, /* similar to free walking but specifically for stonecutter */
+	SERF_STATE_STONECUTTER_FREE_WALKING,
 	SERF_STATE_STONECUTTING,
 	SERF_STATE_SAWING,
 	SERF_STATE_LOST, /* 25 */
-	SERF_STATE_26,
-	SERF_STATE_27,
+	SERF_STATE_LOST_SAILOR,
+	SERF_STATE_FREE_SAILING,
 	SERF_STATE_ESCAPE_BUILDING,
 	SERF_STATE_MINING,
 	SERF_STATE_SMELTING, /* 30 */
@@ -105,19 +125,19 @@ typedef enum {
 	SERF_STATE_KNIGHT_ATTACKING_VICTORY, /* 50 */
 	SERF_STATE_KNIGHT_ATTACKING_DEFEAT,
 	SERF_STATE_KNIGHT_OCCUPY_ENEMY_BUILDING,
-	SERF_STATE_53,
-	SERF_STATE_54,
-	SERF_STATE_55, /* 55 */
-	SERF_STATE_56,
-	SERF_STATE_57,
-	SERF_STATE_58,
-	SERF_STATE_59,
-	SERF_STATE_60, /* 60 */
-	SERF_STATE_61,
-	SERF_STATE_62,
-	SERF_STATE_63,
-	SERF_STATE_64,
-	SERF_STATE_65, /* 65 */
+	SERF_STATE_KNIGHT_FREE_WALKING,
+	SERF_STATE_KNIGHT_ENGAGE_DEFENDING_FREE,
+	SERF_STATE_KNIGHT_ENGAGE_ATTACKING_FREE, /* 55 */
+	SERF_STATE_KNIGHT_ENGAGE_ATTACKING_FREE_JOIN,
+	SERF_STATE_KNIGHT_PREPARE_ATTACKING_FREE,
+	SERF_STATE_KNIGHT_PREPARE_DEFENDING_FREE,
+	SERF_STATE_KNIGHT_PREPARE_DEFENDING_FREE_WAIT,
+	SERF_STATE_KNIGHT_ATTACKING_FREE, /* 60 */
+	SERF_STATE_KNIGHT_DEFENDING_FREE,
+	SERF_STATE_KNIGHT_ATTACKING_VICTORY_FREE,
+	SERF_STATE_KNIGHT_DEFENDING_VICTORY_FREE,
+	SERF_STATE_KNIGHT_ATTACKING_FREE_WAIT,
+	SERF_STATE_KNIGHT_LEAVE_FOR_WALK_TO_FIGHT, /* 65 */
 	SERF_STATE_IDLE_ON_PATH,
 	SERF_STATE_WAIT_IDLE_ON_PATH,
 	SERF_STATE_WAKE_AT_FLAG,
@@ -125,9 +145,13 @@ typedef enum {
 	SERF_STATE_DEFENDING_HUT, /* 70 */
 	SERF_STATE_DEFENDING_TOWER,
 	SERF_STATE_DEFENDING_FORTRESS,
-	SERF_STATE_73,
+	SERF_STATE_SCATTER,
 	SERF_STATE_FINISHED_BUILDING,
-	SERF_STATE_DEFENDING_CASTLE /* 75 */
+	SERF_STATE_DEFENDING_CASTLE, /* 75 */
+
+	/* Additional state: goes at the end to ease loading of
+	   original save game. */
+	SERF_STATE_KNIGHT_ATTACKING_DEFEAT_FREE
 } serf_state_t;
 
 
@@ -136,7 +160,7 @@ typedef struct {
 	int animation; /* Index to animation table in data file. */
 	int counter;
 	map_pos_t pos;
-	uint16_t anim;
+	uint16_t tick;
 	serf_state_t state;
 
 	union {
@@ -159,7 +183,8 @@ typedef struct {
 			uint slope_len; /* C */
 		} entering_building;
 
-		/* States: leaving_building, ready_to_leave */
+		/* States: leaving_building, ready_to_leave,
+		   leave_for_fight */
 		struct {
 			int field_B; /* B */
 			int dest; /* C */
@@ -192,13 +217,14 @@ typedef struct {
 			uint inv_index; /* C */
 		} building_castle;
 
-		/* States: move_resource_out, wait_for_resource_out,
-		   drop_resource_out */
+		/* States: move_resource_out, drop_resource_out */
 		struct {
 			uint res; /* B */
 			uint res_dest; /* C */
 			serf_state_t next_state; /* F */
 		} move_resource_out;
+
+		/* No state: wait_for_resource_out */
 
 		struct {
 			int mode; /* B */
@@ -208,7 +234,10 @@ typedef struct {
 
 		/* States: free_walking, logging,
 		   planting, stonecutting, fishing,
-		   farming, sampling_geo_spot */
+		   farming, sampling_geo_spot,
+		   knight_free_walking,
+		   knight_attacking_free,
+		   knight_attacking_free_wait */
 		struct {
 			int dist1; /* B */
 			int dist2; /* C */
@@ -275,12 +304,39 @@ typedef struct {
 		/* No state data: looking_for_geo_spot */
 
 		/* States: knight_engaging_building,
-		   knight_prepare_attacking, ... */
+		   knight_prepare_attacking,
+		   knight_prepare_defending_free_wait,
+		   knight_attacking_defeat_free,
+		   knight_attacking,
+		   knight_attacking_victory,
+		   knight_engage_attacking_free,
+		   knight_engage_attacking_free_join,
+		   knight_attacking_victory_free,
+		*/
 		struct {
 			int field_B; /* B */
 			int field_C; /* C */
+			int field_D; /* D */
 			int def_index; /* E */
 		} attacking;
+
+		/* States: knight_defending_free,
+		   knight_engage_defending_free */
+		struct {
+			int dist_col; /* B */
+			int dist_row; /* C */
+			int field_D; /* D */
+			int other_dist_col; /* E */
+			int other_dist_row; /* F */
+		} defending_free;
+
+		struct {
+			int dist_col; /* B */
+			int dist_row; /* C */
+			int field_D; /* D */
+			int field_E; /* E */
+			serf_state_t next_state; /* F */
+		} leave_for_walk_to_fight;
 
 		/* States: idle_on_path, wait_idle_on_path,
 		   wake_at_flag, wake_on_path. */
@@ -300,10 +356,10 @@ typedef struct {
 	} s;
 } serf_t;
 
-
-serf_t *get_serf(int index); /* in freeserf.c */
-
 void update_serf(serf_t *serf);
 const char *serf_get_state_name(serf_state_t state);
+
+void serf_set_type(serf_t *serf, serf_type_t type);
+void serf_set_lost_state(serf_t *serf);
 
 #endif /* ! _SERF_H */

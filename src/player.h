@@ -1,17 +1,59 @@
-/* player.h */
+/*
+ * player.h - Player related functions
+ *
+ * Copyright (C) 2013  Jon Lund Steffensen <jonlst@gmail.com>
+ *
+ * This file is part of freeserf.
+ *
+ * freeserf is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * freeserf is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with freeserf.  If not, see <http://www.gnu.org/licenses/>.
+ */
 
 #ifndef _PLAYER_H
 #define _PLAYER_H
 
-#include <stdint.h>
+#include "map.h"
 
-#include "freeserf.h"
-#include "gfx.h"
+/* Whether player has built the initial castle. */
+#define PLAYER_HAS_CASTLE(player)  ((int)((player)->flags & 1))
+/* Whether the strongest knight should be sent to fight. */
+#define PLAYER_SEND_STRONGEST(player)  ((int)(((player)->flags >> 1) & 1))
+/* Whether cycling of knights is in progress. */
+#define PLAYER_CYCLING_KNIGHTS(player)  ((int)(((player)->flags >> 2) & 1))
+/* Whether a message is queued for this player. */
+#define PLAYER_HAS_MESSAGE(player)  ((int)(((player)->flags >> 3) & 1))
+/* Whether the knight level of military buildings is temporarily
+   reduced bacause of cycling of the knights. */
+#define PLAYER_REDUCED_KNIGHT_LEVEL(player)  ((int)(((player)->flags >> 4) & 1))
+/* Whether the cycling of knights is in the second phase. */
+#define PLAYER_CYCLING_SECOND(player)  ((int)(((player)->flags >> 5) & 1))
+/* Whether this player is active. */
+#define PLAYER_IS_ACTIVE(player)  ((player) != NULL)
+/* Whether this player is a computer controlled opponent. */
+#define PLAYER_IS_AI(player)  ((int)(((player)->flags >> 7) & 1))
 
 
-/* player_sett_t object.
-   Actually holds the game state of a player.
-   This is the same for both human and AI players. */
+/* Whether player is prohibited from building military
+   buildings at current position. */
+#define PLAYER_ALLOW_MILITARY(player)  (!(int)((player)->build & 1))
+/* Whether player is prohibited from building flag at
+   current position. */
+#define PLAYER_ALLOW_FLAG(player)  (!(int)(((player)->build >> 1) & 1))
+/* Whether player can spawn new serfs. */
+#define PLAYER_CAN_SPAWN(player)  ((int)(((player)->build >> 2) & 1))
+
+
+/* player_t object. Holds the game state of a player. */
 typedef struct {
 	/* pl_sett_pre */
 	int tool_prio[9];
@@ -21,7 +63,9 @@ typedef struct {
 	int knight_occupation[4];
 
 	/* pl_sett */
-	int player_num;
+	uint player_num;
+	uint color; /* ADDED */
+	uint face;
 	int flags;
 	int build;
 	int completed_building_count[24];
@@ -30,12 +74,11 @@ typedef struct {
 	int inventory_prio[26];
 	int attacking_buildings[64];
 	int current_sett_5_item;
-	int map_cursor_col;
-	int map_cursor_row;
+	/*map_pos_t map_cursor_pos; MOVED to interface_t */
 	/* 100 */
-	int map_cursor_type;
-	panel_btn_t panel_btn_type;
-	int building_height_after_level;
+	/*map_cursor_type_t map_cursor_type; MOVED to interface_t */
+	/*panel_btn_t panel_btn_type; MOVED to interface_t */
+	/*int building_height_after_level; OBSOLETE */
 	int building;
 	int castle_flag;
 	int castle_inventory;
@@ -43,17 +86,17 @@ typedef struct {
 	int knights_to_spawn;
 	/*int spawn_serf_want_knight; OBSOLETE by local var */
 	/* 110 */
-	int field_110;
+	/*int field_110;*/
 	uint total_land_area;
 	uint total_building_score;
 	uint total_military_score;
-	uint16_t last_anim;
+	uint16_t last_tick;
 	/* 120 */
 	int reproduction_counter;
 	int reproduction_reset;
 	int serf_to_knight_rate;
 	uint16_t serf_to_knight_counter; /* Overflow is important */
-	int field_128;
+	int attacking_building_count;
 	int attacking_knights[4];
 	int total_attacking_knights;
 	int building_attacked;
@@ -79,24 +122,32 @@ typedef struct {
 	int wheat_pigfarm;
 	int wheat_mill;
 	int current_sett_6_item;
-	/* 162 */
+
+	/* +1 for every castle defeated,
+	   -1 for own castle lost. */
+	int castle_score;
+	/* 160 */
+	int send_generic_delay;
 	int initial_supplies;
-	/* 164 */
+	/*int emergency_flags;
 	int extra_planks;
 	int extra_stone;
 	int lumberjack_index;
 	int sawmill_index;
-	int stonecutter_index;
+	int stonecutter_index;*/
 	/* 16E */
 	int serf_index;
 	/* 170 */
-	int field_170;
+	int knight_cycle_counter;
 	int timers_count;
+	int send_knight_delay;
 	/* 176 */
 	int index;
-	/* 184 */
+	int military_max_gold;
+	/*int military_gold;*/
+	/* 180 */
+	/*int inventory_gold;*/
 	int knight_morale;
-	/* 188 */
 	int gold_deposited;
 	int castle_knights_wanted;
 	int castle_knights;
@@ -121,108 +172,28 @@ typedef struct {
 	} timers[64];
 
 	/* ... */
-} player_sett_t;
-
-/* player_t object.
-   Actually represents the interface to the human player.
-   Note: there is no player_t object for AI players for this reason. */
-typedef struct {
-	int flags;
-	int click;
-	int pointer_x_max;
-	int pointer_y_max;
-	int pointer_x;
-	int pointer_y;
-	int pointer_x_off;
-	int pointer_x_clk;
-	int pointer_y_clk;
-	/* 10 */
-	/* OBSOLETE
-	int pointer_x_drag;
-	int pointer_y_drag;
-	*/
-	/* 1A */
-	frame_t *frame;
-	/* 20 */
-	int game_area_cols;
-	/* 30 */
-	int bottom_panel_x; /* ADDITION */
-	int bottom_panel_y;
-	int bottom_panel_width; /* ADDITION */
-	int bottom_panel_height; /* ADDITION */
-	/* 3E */
-	int frame_width;
-	int frame_height;
-	/* 46 */
-	/*int col_game_area;*/ /* OBSOLETE */
-	/*int row_game_area;*/ /* OBSOLETE */
-	int col_offset;
-	int row_offset;
-	int map_min_x;
-	int map_min_y; /* ADDITION */
-	int game_area_rows;
-	int map_max_y;
-	/* 54 */
-	map_1_t **map_rows;
-	/* 5C */
-	frame_t *popup_frame;
-	/* 60 */
-	int panel_btns[5];
-	int panel_btns_set[5];
-	int panel_btns_x;
-	int msg_icon_x;
-	/* 70 */
-	box_t box;
-	box_t clkmap;
-	/* 78 */
-	int popup_x;
-	int popup_y;
-	/* 82 */
-	player_sett_t *sett;
-	int config;
-	int msg_flags;
-	int map_cursor_col_max;
-	/* 8E */
-	int map_cursor_col_off;
-	int map_y_off;
-	/*int **map_serf_rows;*/ /* OBSOLETE */
-	int message_box;
-	/* 9A */
-	int map_x_off;
-	/* A0 */
-	int panel_btns_dist;
-	/* A4 */
-	sprite_loc_t map_cursor_sprites[7];
-	int road_length;
-	int field_D0;
-	/* D2 */
-	uint16_t last_anim;
-	int current_stat_8_mode;
-	int current_stat_7_item;
-	/* 1B4 */
-	/* Determines what sfx should be played. */
-	int water_in_view;
-	int trees_in_view;
-	/* 1C0 */
-	int return_timeout;
-	int return_col_game_area;
-	int return_row_game_area;
-	/* 1E0 */
-	int panel_btns_first_x;
-	int timer_icon_x;
-	/* ... */
 } player_t;
 
 
-void player_sett_reset_food_priority(player_sett_t *sett);
-void player_sett_reset_planks_priority(player_sett_t *sett);
-void player_sett_reset_steel_priority(player_sett_t *sett);
-void player_sett_reset_coal_priority(player_sett_t *sett);
-void player_sett_reset_wheat_priority(player_sett_t *sett);
-void player_sett_reset_tool_priority(player_sett_t *sett);
+void player_add_notification(player_t *player, int type, map_pos_t pos);
 
-void player_sett_reset_flag_priority(player_sett_t *sett);
-void player_sett_reset_inventory_priority(player_sett_t *sett);
+void player_reset_food_priority(player_t *player);
+void player_reset_planks_priority(player_t *player);
+void player_reset_steel_priority(player_t *player);
+void player_reset_coal_priority(player_t *player);
+void player_reset_wheat_priority(player_t *player);
+void player_reset_tool_priority(player_t *player);
+
+void player_reset_flag_priority(player_t *player);
+void player_reset_inventory_priority(player_t *player);
+
+void player_change_knight_occupation(player_t *player, int index,
+				     int adjust_max, int delta);
+
+int player_promote_serfs_to_knights(player_t *player, int number);
+int player_knights_available_for_attack(player_t *player, map_pos_t pos);
+void player_start_attack(player_t *player);
+void player_cycle_knights(player_t *player);
 
 
 #endif /* ! _PLAYER_H */

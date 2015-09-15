@@ -1,12 +1,67 @@
-/* map.h */
+/*
+ * map.h - Map generators and map update functions
+ *
+ * Copyright (C) 2013  Jon Lund Steffensen <jonlst@gmail.com>
+ *
+ * This file is part of freeserf.
+ *
+ * freeserf is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * freeserf is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with freeserf.  If not, see <http://www.gnu.org/licenses/>.
+ */
 
 #ifndef _MAP_H
 #define _MAP_H
 
-#include <stdint.h>
+#include "misc.h"
 
-/* Macros for moving a map_pos_t around in the map. */
-#define MAP_MOVE(pos,dir)  (((pos)+globals.map_dirs[(dir)]) & globals.map_index_mask)
+#ifdef HAVE_CONFIG_H
+# include <config.h>
+#endif
+
+#include <stdlib.h>
+#ifdef HAVE_STDINT_H
+#include <stdint.h>
+#endif
+
+typedef enum {
+	DIR_NONE = -1,
+
+	DIR_RIGHT = 0,
+	DIR_DOWN_RIGHT,
+	DIR_DOWN,
+	DIR_LEFT,
+	DIR_UP_LEFT,
+	DIR_UP,
+
+	DIR_UP_RIGHT,
+	DIR_DOWN_LEFT
+} dir_t;
+
+#define DIR_REVERSE(dir)  ((dir_t)(((dir) + 3) % 6))
+
+/* Extract col and row from map_pos_t */
+#define MAP_POS_COL(pos)  ((pos) & game.map.col_mask)
+#define MAP_POS_ROW(pos)  (((pos)>>game.map.row_shift) & game.map.row_mask)
+
+/* Translate col, row coordinate to map_pos_t value. */
+#define MAP_POS(x,y)  (((y)<<game.map.row_shift) | (x))
+
+/* Addition of two map positions. */
+#define MAP_POS_ADD(pos,off)  MAP_POS(((MAP_POS_COL(pos) + MAP_POS_COL(off)) & game.map.col_mask), \
+				      ((MAP_POS_ROW(pos) + MAP_POS_ROW(off)) & game.map.row_mask))
+
+/* Movement of map position according to directions. */
+#define MAP_MOVE(pos,dir)  MAP_POS_ADD((pos), game.map.dirs[(dir)])
 
 #define MAP_MOVE_RIGHT(pos)  MAP_MOVE((pos), DIR_RIGHT)
 #define MAP_MOVE_DOWN_RIGHT(pos)  MAP_MOVE((pos), DIR_DOWN_RIGHT)
@@ -18,41 +73,47 @@
 #define MAP_MOVE_UP_RIGHT(pos)  MAP_MOVE((pos), DIR_UP_RIGHT)
 #define MAP_MOVE_DOWN_LEFT(pos)  MAP_MOVE((pos), DIR_DOWN_LEFT)
 
-#define MAP_MOVE_RIGHT_N(pos,n)  (((pos)+globals.map_dirs[DIR_RIGHT]*(n)) & globals.map_index_mask)
-#define MAP_MOVE_DOWN_N(pos,n)  (((pos)+globals.map_dirs[DIR_DOWN]*(n)) & globals.map_index_mask)
-
-#define MAP_COORD_ARGS(pos)  \
-	((pos) & globals.map_col_mask), \
-	(((pos) >> globals.map_row_shift) & globals.map_row_mask)
-
-#define MAP_2_DATA(map)  ((map_2_t *)((map) + globals.map_data_offset))
-
-/* Translate col, row coordinate to map_pos_t value. */
-#define MAP_POS(x,y)  (((y)<<globals.map_row_shift) | (x))
+#define MAP_MOVE_RIGHT_N(pos,n)  MAP_POS_ADD((pos), game.map.dirs[DIR_RIGHT]*(n))
+#define MAP_MOVE_DOWN_N(pos,n)  MAP_POS_ADD((pos), game.map.dirs[DIR_DOWN]*(n))
 
 
 /* Extractors for map data. */
-#define MAP_HAS_FLAG(pos)  ((int)((globals.map_mem2_ptr[(pos)].flags >> 7) & 1))
-#define MAP_WATER_1(pos)  ((int)((globals.map_mem2_ptr[(pos)].flags >> 6) & 1)) /* Meaning: Occupied? */
-#define MAP_PATHS(pos)  ((int)(globals.map_mem2_ptr[(pos)].flags & 0x3f))
+#define MAP_PATHS(pos)  ((uint)(game.map.tiles[(pos)].paths & 0x3f))
 
-#define MAP_HAS_OWNER(pos)  ((int)((globals.map_mem2_ptr[(pos)].height >> 7) & 1))
-#define MAP_OWNER(pos)  ((int)((globals.map_mem2_ptr[(pos)].height >> 5) & 3))
-#define MAP_HEIGHT(pos)  ((int)(globals.map_mem2_ptr[(pos)].height & 0x1f))
+#define MAP_HAS_OWNER(pos)  ((uint)((game.map.tiles[(pos)].height >> 7) & 1))
+#define MAP_OWNER(pos)  ((uint)((game.map.tiles[(pos)].height >> 5) & 3))
+#define MAP_HEIGHT(pos)  ((uint)(game.map.tiles[(pos)].height & 0x1f))
 
-#define MAP_TYPE_UP(pos)  ((int)((globals.map_mem2_ptr[(pos)].type >> 4) & 0xf))
-#define MAP_TYPE_DOWN(pos)  ((int)(globals.map_mem2_ptr[(pos)].type & 0xf))
+#define MAP_TYPE_UP(pos)  ((uint)((game.map.tiles[(pos)].type >> 4) & 0xf))
+#define MAP_TYPE_DOWN(pos)  ((uint)(game.map.tiles[(pos)].type & 0xf))
 
-#define MAP_OBJ(pos)  ((map_obj_t)(globals.map_mem2_ptr[(pos)].obj & 0x7f))
-#define MAP_WATER_2(pos)  ((int)((globals.map_mem2_ptr[(pos)].obj >> 7) & 1))
+#define MAP_OBJ(pos)  ((map_obj_t)(game.map.tiles[(pos)].obj & 0x7f))
+#define MAP_IDLE_SERF(pos)  ((uint)((game.map.tiles[(pos)].obj >> 7) & 1))
 
-#define MAP_OBJ_INDEX(pos)  ((int)(MAP_2_DATA(globals.map_mem2_ptr)[(pos)].u.index))
-#define MAP_IDLE_SERF(pos)  ((int)((MAP_2_DATA(globals.map_mem2_ptr)[(pos)].u.s.field_1 >> 7) & 1))
-#define MAP_PLAYER(pos)  ((int)(MAP_2_DATA(globals.map_mem2_ptr)[(pos)].u.s.field_1 & 3))
-#define MAP_RES_TYPE(pos)  ((ground_deposit_t)((MAP_2_DATA(globals.map_mem2_ptr)[(pos)].u.s.resource >> 5) & 7))
-#define MAP_RES_AMOUNT(pos)  ((int)(MAP_2_DATA(globals.map_mem2_ptr)[(pos)].u.s.resource & 0x1f))
-#define MAP_RES_FISH(pos)  ((int)(MAP_2_DATA(globals.map_mem2_ptr)[(pos)].u.s.resource))
-#define MAP_SERF_INDEX(pos)  ((int)(MAP_2_DATA(globals.map_mem2_ptr)[(pos)].serf_index))
+#define MAP_OBJ_INDEX(pos)  ((uint)game.map.tiles[(pos)].obj_index)
+#define MAP_RES_TYPE(pos)  ((ground_deposit_t)((game.map.tiles[(pos)].resource >> 5) & 7))
+#define MAP_RES_AMOUNT(pos)  ((uint)(game.map.tiles[(pos)].resource & 0x1f))
+#define MAP_RES_FISH(pos)  ((uint)game.map.tiles[(pos)].resource)
+#define MAP_SERF_INDEX(pos)  ((uint)game.map.tiles[(pos)].serf)
+
+
+#define MAP_HAS_FLAG(pos)  (MAP_OBJ(pos) == MAP_OBJ_FLAG)
+#define MAP_HAS_BUILDING(pos)  (MAP_OBJ(pos) >= MAP_OBJ_SMALL_BUILDING && \
+				MAP_OBJ(pos) <= MAP_OBJ_CASTLE)
+
+
+
+/* Whether any of the two up/down tiles at this pos are water. */
+#define MAP_WATER_TILE(pos)				\
+	(MAP_TYPE_DOWN(pos) < 4 &&			\
+	 MAP_TYPE_UP(pos) < 4)
+
+/* Whether the position is completely surrounded by water. */
+#define MAP_IN_WATER(pos)				\
+	(MAP_WATER_TILE(pos) &&				\
+	 MAP_WATER_TILE(MAP_MOVE_UP_LEFT(pos)) &&	\
+	 MAP_TYPE_DOWN(MAP_MOVE_LEFT(pos)) < 4 &&	\
+	 MAP_TYPE_UP(MAP_MOVE_UP(pos)) < 4)
 
 
 typedef enum {
@@ -163,20 +224,18 @@ typedef enum {
 } map_obj_t;
 
 
-/* A map vertex can be OPEN which means that
+/* A map space can be OPEN which means that
    a building can be constructed in the space.
    A FILLED space can be passed by a serf, but
-   nothing can be built in this space. The higher
-   space classes can neither be used for contructions
-   nor passed by serfs. */
+   nothing can be built in this space except roads.
+   A SEMIPASSABLE space is like FILLED but no roads
+   can be built. A IMPASSABLE space can neither be
+   used for contructions nor passed by serfs. */
 typedef enum {
 	MAP_SPACE_OPEN = 0,
 	MAP_SPACE_FILLED,
+	MAP_SPACE_SEMIPASSABLE,
 	MAP_SPACE_IMPASSABLE,
-	MAP_SPACE_FLAG,
-	MAP_SPACE_SMALL_BUILDING,
-	MAP_SPACE_LARGE_BUILDING,
-	MAP_SPACE_CASTLE
 } map_space_t;
 
 typedef enum {
@@ -188,28 +247,33 @@ typedef enum {
 } ground_deposit_t;
 
 typedef struct {
-	uint8_t flags;
+	uint8_t paths;
 	uint8_t height;
 	uint8_t type;
 	uint8_t obj;
-} map_1_t;
-
-typedef struct {
-	union {
-		uint16_t index;
-		struct {
-			uint8_t resource;
-			uint8_t field_1;
-		} s;
-	} u;
-	uint16_t serf_index;
-} map_2_t;
+	uint16_t obj_index;
+	uint8_t resource;
+	uint16_t serf;
+} map_tile_t;
 
 
 /* map_pos_t is a compact composition of col and row values that
    uniquely identifies a vertex in the map space. It is also used
    directly as index to map data arrays. */
-typedef int map_pos_t;
+typedef uint map_pos_t;
+
+typedef struct {
+	/* Fundamentals */
+	map_tile_t *tiles;
+	uint col_size, row_size;
+
+	/* Derived */
+	map_pos_t dirs[8];
+	uint tile_count;
+	uint cols, rows;
+	uint col_mask, row_mask;
+	uint row_shift;
+} map_t;
 
 
 /* Mapping from map_obj_t to map_space_t. */
@@ -217,12 +281,16 @@ extern const map_space_t map_space_from_obj[128];
 
 
 void map_set_height(map_pos_t pos, int height);
-void map_set_object(map_pos_t pos, map_obj_t obj);
+void map_set_object(map_pos_t pos, map_obj_t obj, int index);
 void map_remove_ground_deposit(map_pos_t pos, int amount);
 void map_remove_fish(map_pos_t pos, int amount);
 void map_set_serf_index(map_pos_t pos, int index);
 
+void map_init_dimensions(map_t *map);
+void map_init_minimap();
+
 void map_init();
+void map_deinit();
 void map_update();
 
 

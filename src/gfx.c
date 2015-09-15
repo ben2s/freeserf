@@ -1,28 +1,119 @@
-/* gfx.c */
+/*
+ * gfx.c - General graphics and data file functions
+ *
+ * Copyright (C) 2013-2014  Jon Lund Steffensen <jonlst@gmail.com>
+ *
+ * This file is part of freeserf.
+ *
+ * freeserf is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * freeserf is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with freeserf.  If not, see <http://www.gnu.org/licenses/>.
+ */
 
-#ifdef HAVE_CONFIG_H
-# include <config.h>
-#endif
-
-#include <stdio.h>
-#include <stdlib.h>
-#include <stdint.h>
-#include <unistd.h>
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <fcntl.h>
-#include <errno.h>
-#include <assert.h>
-
-#ifdef HAVE_SYS_MMAN_H
-# include <sys/mman.h>
-#endif
-
-#include "freeserf_endian.h"
-#include "sdl-video.h"
 #include "gfx.h"
+#include "sdl-video.h"
 #include "data.h"
 #include "log.h"
+
+#include <assert.h>
+#include <string.h>
+
+/* Unique identifier for a sprite. */
+typedef struct {
+	const dos_sprite_t *sprite;
+	const dos_sprite_t *mask;
+	uint offset;
+} sprite_id_t;
+
+typedef struct sprite_ht_entry sprite_ht_entry_t;
+
+/* Entry in the hashtable of sprites. */
+struct sprite_ht_entry {
+	sprite_ht_entry_t *next;
+	sprite_id_t id;
+	sprite_t *value;
+};
+
+/* Hashtable of sprites, used as sprite cache. */
+typedef struct {
+	size_t size;
+	uint entry_count;
+	sprite_ht_entry_t **entries;
+} sprite_ht_t;
+
+
+/* Sprite cache hash table */
+static sprite_ht_t sprite_cache;
+
+
+/* Calculate hash of sprite identifier. */
+static uint32_t
+sprite_id_hash(const sprite_id_t *id)
+{
+	const uint8_t *s = (uint8_t *)id;
+
+	/* FNV-1 */
+	uint32_t hash = 2166136261;
+	for (int i = 0; i < sizeof(sprite_id_t); i++) {
+		hash *= 16777619;
+		hash ^= s[i];
+	}
+
+	return hash;
+}
+
+/* Intialize sprite hashtable. */
+static int
+sprite_ht_init(sprite_ht_t *ht, size_t size)
+{
+	ht->size = size;
+	ht->entries = (sprite_ht_entry_t**)calloc(size, sizeof(sprite_ht_entry_t *));
+	if (ht->entries == NULL) return -1;
+
+	ht->entry_count = 0;
+
+	return 0;
+}
+
+/* Return a pointer to the surface pointer associated with
+   id. If it does not exist in the table it a new entry is
+   created. */
+static sprite_ht_entry_t *
+sprite_ht_store(sprite_ht_t *ht, const sprite_id_t *id)
+{
+	uint32_t hash = sprite_id_hash(id);
+	sprite_ht_entry_t *entry =
+		(sprite_ht_entry_t *)&ht->entries[hash % ht->size];
+
+	/* The first entry pointed to is not really an
+	   entry but a sentinel. */
+	while (entry->next != NULL) {
+		entry = entry->next;
+		if (memcmp(id, &entry->id, sizeof(sprite_id_t)) == 0) {
+			return entry;
+		}
+	}
+
+	sprite_ht_entry_t *new_entry = (sprite_ht_entry_t*)calloc(1, sizeof(sprite_ht_entry_t));
+	if (new_entry == NULL) return NULL;
+
+	ht->entry_count += 1;
+
+	entry->next = new_entry;
+	memcpy(&new_entry->id, id, sizeof(sprite_id_t));
+
+	return new_entry;
+}
+
 
 /* There are different types of sprites:
    - Non-packed, rectangular sprites: These are simple called sprites here.
@@ -33,130 +124,393 @@
    or mask parts of other sprites completely (mask sprites).
 */
 
-/* These entries follow the 8 byte header of the data file. */
-typedef struct {
-	uint32_t size;
-	uint32_t offset;
-} spae_entry_t;
-
-
-static void *sprites;
-static size_t sprites_size;
-static unsigned int entry_count;
-
-
-/* Load data file at path and let the global variable sprites refer to the memory
-   with the data file content. */
-int
-gfx_load_file(const char *path)
+/* Create empty sprite object */
+static sprite_t *
+gfx_create_empty_sprite(const dos_sprite_t *sprite)
 {
-	int r;
+	uint size = sprite->w * sprite->h * 4;
+	sprite_t *s = (sprite_t *)calloc(sizeof(sprite_t) + size, 1);
+	if (s == NULL) return NULL;
 
-#ifdef HAVE_MMAP
-	int fd = open(path, O_RDWR);
-	if (fd < 0) return -1;
+	s->delta_x = sprite->b_x;
+	s->delta_y = sprite->b_y;
+	s->offset_x = sprite->x;
+	s->offset_y = sprite->y;
+	s->width = sprite->w;
+	s->height = sprite->h;
 
-	struct stat sb;
-	r = fstat(fd, &sb);
-	if (r < 0) return -1;
+	return s;
+}
 
-	sprites_size = sb.st_size;
-	sprites = mmap(NULL, sprites_size, PROT_READ | PROT_WRITE,
-		       MAP_PRIVATE, fd, 0);
-	if (sprites == MAP_FAILED) {
-		int errsv = errno;
-		close(fd);
-		errno = errsv;
-		return -1;
+/* Create sprite object */
+static sprite_t *
+gfx_create_sprite(const dos_sprite_t *sprite)
+{
+	sprite_t *s = gfx_create_empty_sprite(sprite);
+	if (s == NULL) return NULL;
+
+	uint8_t *palette = (uint8_t*)data_get_object(DATA_PALETTE_GAME, NULL);
+
+	uint8_t *src = (uint8_t *)sprite + sizeof(dos_sprite_t);
+	uint8_t *dest = (uint8_t *)s + sizeof(sprite_t);
+	uint size = sprite->w * sprite->h;
+
+	for (uint i = 0; i < size; i++) {
+		dest[4*i+0] = palette[3*src[i]+0]; /* Red */
+		dest[4*i+1] = palette[3*src[i]+1]; /* Green */
+		dest[4*i+2] = palette[3*src[i]+2]; /* Blue */
+		dest[4*i+3] = 0xff; /* Alpha */
 	}
 
-	close(fd);
-#else /* ! HAVE_MMAP */
-	FILE *f = fopen(path, "rb");
-	if (f == NULL) return -1;
+	return s;
+}
 
-	r = fseek(f, 0, SEEK_END);
-	if (r < 0) return -1;
+/* Create transparent sprite object */
+static sprite_t *
+gfx_create_transparent_sprite(const dos_sprite_t *sprite, int color_off)
+{
+	sprite_t *s = gfx_create_empty_sprite(sprite);
+	if (s == NULL) return NULL;
 
-	sprites_size = ftell(f);
-	if (sprites_size == (size_t)-1) return -1;
+	uint8_t *palette = (uint8_t*)data_get_object(DATA_PALETTE_GAME, NULL);
 
-	r = fseek(f, 0, SEEK_SET);
-	if (r < 0) return -1;
+	uint8_t *src = (uint8_t *)sprite + sizeof(dos_sprite_t);
+	uint8_t *dest = (uint8_t *)s + sizeof(sprite_t);
+	uint size = sprite->w * sprite->h;
 
-	sprites = malloc(sprites_size);
-	if (sprites == NULL) {
-		int errsv = errno;
-		fclose(f);
-		errno = errsv;
-		return -1;
+	uint i = 0;
+	uint j = 0;
+	while (j < size) {
+		j += src[i];
+		int n = src[i+1];
+
+		for (int k = 0; k < n; k++) {
+			uint p_index = src[i+2+k] + color_off;
+			dest[4*(j+k)+0] = palette[3*p_index+0]; /* Red */
+			dest[4*(j+k)+1] = palette[3*p_index+1]; /* Green */
+			dest[4*(j+k)+2] = palette[3*p_index+2]; /* Blue */
+			dest[4*(j+k)+3] = 0xff; /* Alpha */
+		}
+		i += n + 2;
+		j += n;
 	}
 
-	size_t rd = fread(sprites, sprites_size, 1, f);
-	if (rd < 1) return -1;
+	return s;
+}
 
-	fclose(f);
-#endif
+/* Create overlay sprite object */
+static sprite_t *
+gfx_create_bitmap_sprite(const dos_sprite_t *sprite, uint value)
+{
+	sprite_t *s = gfx_create_empty_sprite(sprite);
+	if (s == NULL) return NULL;
 
-	/* Read the number of entries in the index table.
-	   Some entries are undefined (size and offset are zero). */
-	entry_count = le32toh(*((uint32_t *)sprites + 1)) + 1;
+	uint8_t *src = (uint8_t *)sprite + sizeof(dos_sprite_t);
+	uint8_t *dest = (uint8_t *)s + sizeof(sprite_t);
+	uint size = sprite->w * sprite->h;
 
-#if 0
-	/* Print list of undefined entries. */
-	int run_start = 0;
-	spae_entry_t *entries = sprites;
-	for (int i = 1; i < entry_count; i++) {
-		if (run_start > 0) {
-			if (entries[i].offset == 0) continue;
-			int length = i - run_start;
-			if (length > 1) {
-				LOGD("empty: %i-%i", run_start, i-1);
-			}
-			else LOGD("empty: %i", i-1);
-			run_start = 0;
-		} else if (entries[i].offset == 0) {
-			run_start = i;
+	uint i = 0;
+	uint j = 0;
+	while (j < size) {
+		j += src[i];
+		int n = src[i+1];
+		for (int k = 0; k < n && j + k < size; k++) {
+			dest[4*(j+k)+3] = value; /* Alpha */
+		}
+		i += 2;
+		j += n;
+	}
+
+	return s;
+}
+
+/* Free sprite object */
+static void
+gfx_free_sprite(sprite_t *sprite)
+{
+	free(sprite);
+}
+
+/* Apply mask to map tile sprite
+   The resulting sprite will be extended to the height of the mask
+   by repeating lines from the top of the sprite. The width of the
+   mask and the sprite must be identical. */
+static sprite_t *
+gfx_mask_map_tile_sprite(const sprite_t *sprite, const sprite_t *mask)
+{
+	uint size = mask->width * mask->height * 4;
+	sprite_t *s = (sprite_t *)calloc(sizeof(sprite_t) + size, 1);
+	if (s == NULL) return NULL;
+
+	s->delta_x = mask->delta_x;
+	s->delta_y = mask->delta_y;
+	s->offset_x = mask->offset_x;
+	s->offset_y = mask->offset_y;
+	s->width = mask->width;
+	s->height = mask->height;
+
+	uint8_t *src_data = (uint8_t *)sprite + sizeof(sprite_t);
+	uint8_t *dest_data = (uint8_t *)s + sizeof(sprite_t);
+	uint to_copy = size;
+
+	/* Copy extended data to new sprite */
+	while (to_copy > 0) {
+		uint s = min(to_copy, sprite->width * sprite->height * 4);
+		memcpy(dest_data, src_data, s);
+		to_copy -= s;
+		dest_data += s;
+	}
+
+	/* Apply mask from mask sprite */
+	uint8_t *s_data = (uint8_t *)s + sizeof(sprite_t);
+	uint8_t *m_data = (uint8_t *)mask + sizeof(sprite_t);
+	for (uint y = 0; y < mask->height; y++) {
+		for (uint x = 0; x < mask->width; x++) {
+			int alpha_index = 4*(y * mask->width + x) + 3;
+			s_data[alpha_index] &= m_data[alpha_index];
 		}
 	}
-#endif
+
+	return s;
+}
+
+/* Apply mask to waves sprite
+   The mask will be applied at a horizontal offset on the
+   sprite, and the resulting sprite will be limited by the
+   size of the mask, and the height of the sprite. The sprite
+   must be at least as wide as the mask plus the mask offset. */
+static sprite_t *
+gfx_mask_waves_sprite(const sprite_t *sprite, const sprite_t *mask, int x_off)
+{
+	uint height = min(mask->height, sprite->height);
+	uint size = mask->width * height * 4;
+	sprite_t *s = (sprite_t *)calloc(sizeof(sprite_t) + size, 1);
+	if (s == NULL) return NULL;
+
+	s->delta_x = sprite->delta_x;
+	s->delta_y = sprite->delta_y;
+	s->offset_x = sprite->offset_x;
+	s->offset_y = sprite->offset_y;
+	s->width = mask->width;
+	s->height = height;
+
+	uint8_t *src_data = (uint8_t *)sprite + sizeof(sprite_t) + 4*x_off;
+	uint8_t *dest_data = (uint8_t *)s + sizeof(sprite_t);
+
+	/* Copy data to new sprite */
+	for (uint i = 0; i < height; i++) {
+		memcpy(dest_data, src_data, mask->width * 4);
+		src_data += 4*sprite->width;
+		dest_data += 4*mask->width;
+	}
+
+	/* Apply mask from mask sprite */
+	uint8_t *s_data = (uint8_t *)s + sizeof(sprite_t);
+	uint8_t *m_data = (uint8_t *)mask + sizeof(sprite_t);
+	for (uint y = 0; y < s->height; y++) {
+		for (uint x = 0; x < s->width; x++) {
+			int alpha_index = 4*(y * s->width + x) + 3;
+			s_data[alpha_index] &= m_data[alpha_index];
+		}
+	}
+
+	return s;
+}
+
+
+int
+gfx_init(int width, int height, int fullscreen)
+{
+	int r = sdl_init();
+	if (r < 0) return -1;
+
+	LOGI("graphics", "Setting resolution to %ix%i...", width, height);
+
+	r = sdl_set_resolution(width, height, fullscreen);
+	if (r < 0) return -1;
+
+	const dos_sprite_t *cursor = data_get_dos_sprite(DATA_CURSOR);
+	sprite_t *sprite = gfx_create_transparent_sprite(cursor, 0);
+	sdl_set_cursor(sprite);
+	gfx_free_sprite(sprite);
+
+	/* Init sprite cache */
+	sprite_ht_init(&sprite_cache, 10240);
 
 	return 0;
 }
 
-/* Free the loaded data file. */
 void
-gfx_unload()
+gfx_deinit()
 {
-#ifdef HAVE_MMAP
-	munmap(sprites, sprites_size);
-#else /* ! HAVE_MMAP */
-	free(sprites);
-#endif
+	sdl_deinit();
 }
 
-/* Return a pointer to the data object at index.
-   If size is non-NULL it will be set to the size of the data object.
-   (There's no guarantee that size is correct!). */
-void *
-gfx_get_data_object(int index, size_t *size)
+
+/* Draw the opaque sprite with data file index of
+   sprite at x, y in dest frame. */
+void
+gfx_draw_sprite(int x, int y, uint sprite, frame_t *dest)
 {
-	assert(index > 0 && index < entry_count);
+	const dos_sprite_t *spr = data_get_dos_sprite(sprite);
+	assert(spr != NULL);
 
-	spae_entry_t *entries = sprites;
-	uint8_t *bytes = sprites;
+	sprite_id_t id;
+	id.sprite = spr;
+	id.mask = NULL;
+	id.offset = 0;
+	sprite_ht_entry_t *entry = sprite_ht_store(&sprite_cache, &id);
+	if (entry->value == NULL) {
+		sprite_t *s = gfx_create_sprite(spr);
+		assert(s != NULL);
+		entry->value = s;
+	}
 
-	size_t offset = le32toh(entries[index].offset);
-	assert(offset != 0);
-
-	if (size) *size = le32toh(entries[index].size);
-
-	return &bytes[offset];
+	x += entry->value->offset_x;
+	y += entry->value->offset_y;
+	sdl_draw_sprite(entry->value, x, y, 0, dest);
 }
+
+/* Draw the transparent sprite with data file index of
+   sprite at x, y in dest frame.*/
+void
+gfx_draw_transp_sprite(int x, int y, uint sprite, int use_off,
+		       int y_off, int color_off, frame_t *dest)
+{
+	const dos_sprite_t *spr = data_get_dos_sprite(sprite);
+	assert(spr != NULL);
+
+	sprite_id_t id;
+	id.sprite = spr;
+	id.mask = NULL;
+	id.offset = color_off;
+	sprite_ht_entry_t *entry = sprite_ht_store(&sprite_cache, &id);
+	if (entry->value == NULL) {
+		sprite_t *s = gfx_create_transparent_sprite(spr, color_off);
+		assert(s != NULL);
+		entry->value = s;
+	}
+
+	if (use_off) {
+		x += entry->value->offset_x;
+		y += entry->value->offset_y;
+	}
+	sdl_draw_sprite(entry->value, x, y, y_off, dest);
+}
+
+/* Draw the masked sprite with given mask and sprite
+   indices at x, y in dest frame. */
+void
+gfx_draw_masked_sprite(int x, int y, uint mask, uint sprite, frame_t *dest)
+{
+	const dos_sprite_t *spr = data_get_dos_sprite(sprite);
+	assert(spr != NULL);
+
+	const dos_sprite_t *msk = data_get_dos_sprite(mask);
+	assert(msk != NULL);
+
+	sprite_id_t id;
+	id.sprite = spr;
+	id.mask = msk;
+	id.offset = 0;
+	sprite_ht_entry_t *entry = sprite_ht_store(&sprite_cache, &id);
+	if (entry->value == NULL) {
+		sprite_t *s = gfx_create_sprite(spr);
+		assert(s != NULL);
+
+		sprite_t *m = gfx_create_bitmap_sprite(msk, 0xff);
+		assert(m != NULL);
+
+		sprite_t *masked = gfx_mask_map_tile_sprite(s, m);
+		assert(masked != NULL);
+
+		entry->value = masked;
+
+		gfx_free_sprite(s);
+		gfx_free_sprite(m);
+	}
+
+	x += entry->value->offset_x;
+	y += entry->value->offset_y;
+	sdl_draw_sprite(entry->value, x, y, 0, dest);
+}
+
+/* Draw the overlay sprite with data file index of
+   sprite at x, y in dest frame. Rendering will be
+   offset in the vertical axis from y_off in the
+   sprite. */
+void
+gfx_draw_overlay_sprite(int x, int y, uint sprite, int y_off, frame_t *dest)
+{
+	const dos_sprite_t *spr = data_get_dos_sprite(sprite);
+	assert(spr != NULL);
+
+	sprite_id_t id;
+	id.sprite = spr;
+	id.mask = NULL;
+	id.offset = 0;
+	sprite_ht_entry_t *entry = sprite_ht_store(&sprite_cache, &id);
+	if (entry->value == NULL) {
+		sprite_t *s = gfx_create_bitmap_sprite(spr, 0x80);
+		assert(s != NULL);
+		entry->value = s;
+	}
+
+	x += entry->value->offset_x;
+	y += entry->value->offset_y;
+	sdl_draw_sprite(entry->value, x, y, y_off, dest);
+}
+
+/* Draw the waves sprite with given mask and sprite
+   indices at x, y in dest frame. */
+void
+gfx_draw_waves_sprite(int x, int y, uint mask, uint sprite,
+		      int mask_off, frame_t *dest)
+{
+	const dos_sprite_t *spr = data_get_dos_sprite(sprite);
+	assert(spr != NULL);
+
+	const dos_sprite_t *msk = NULL;
+	if (mask > 0) {
+		msk = data_get_dos_sprite(mask);
+		assert(msk != NULL);
+	}
+
+	sprite_id_t id;
+	id.sprite = spr;
+	id.mask = msk;
+	id.offset = mask_off;
+	sprite_ht_entry_t *entry = sprite_ht_store(&sprite_cache, &id);
+	if (entry->value == NULL) {
+		sprite_t *s = gfx_create_transparent_sprite(spr, 0);
+		assert(s != NULL);
+
+		sprite_t *m = NULL;
+		if (msk != NULL) {
+			m = gfx_create_bitmap_sprite(msk, 0xff);
+			assert(m != NULL);
+
+			sprite_t *masked = gfx_mask_waves_sprite(s, m, mask_off);
+			assert(masked != NULL);
+
+			gfx_free_sprite(s);
+			gfx_free_sprite(m);
+
+			entry->value = masked;
+		} else {
+			entry->value = s;
+		}
+	}
+
+	x += entry->value->offset_x;
+	y += entry->value->offset_y;
+	sdl_draw_sprite(entry->value, x, y, 0, dest);
+}
+
 
 /* Draw a character at x, y in the dest frame. */
 static void
-gfx_draw_char_sprite(int x, int y, unsigned int c, int color, int shadow, frame_t *dest)
+gfx_draw_char_sprite(int x, int y, uint c, int color, int shadow, frame_t *dest)
 {
 	static const int sprite_offset_from_ascii[] = {
 
@@ -199,11 +553,11 @@ gfx_draw_char_sprite(int x, int y, unsigned int c, int color, int shadow, frame_
 	if (s < 0) return;
 
 	if (shadow) {
-		sdl_draw_transp_sprite(gfx_get_data_object(DATA_FONT_SHADOW_BASE + s, NULL),
-				       x, y, 0, 0, shadow, dest);
+		gfx_draw_transp_sprite(x, y, DATA_FONT_SHADOW_BASE + s,
+				       0, 0, shadow, dest);
 	}
-	sdl_draw_transp_sprite(gfx_get_data_object(DATA_FONT_BASE + s, NULL),
-			       x, y, 0, 0, color, dest);
+	gfx_draw_transp_sprite(x, y, DATA_FONT_BASE + s, 0, 0,
+			       color, dest);
 }
 
 /* Draw the string str at x, y in the dest frame. */
@@ -244,127 +598,64 @@ gfx_draw_number(int x, int y, int color, int shadow, frame_t *dest, int n)
 	}
 }
 
-/* Draw the opaque sprite with data file index of
-   sprite at x, y in dest frame. */
+/* Draw a rectangle with color at x, y in the dest frame. */
 void
-gfx_draw_sprite(int x, int y, int sprite, frame_t *dest)
+gfx_draw_rect(int x, int y, int width, int height, int color, frame_t *dest)
 {
-	sprite_t *spr = gfx_get_data_object(sprite, NULL);
-	if (spr != NULL) sdl_draw_sprite(spr, x, y, dest);
+	uint8_t *palette = (uint8_t*)data_get_object(DATA_PALETTE_GAME, NULL);
+	color_t c = { palette[3*color+0], palette[3*color+1],
+		      palette[3*color+2], 0xff };
+
+	sdl_draw_rect(x, y, width, height, &c, dest);
 }
 
-/* Draw the transparent sprite with data file index of
-   sprite at x, y in dest frame.*/
-void
-gfx_draw_transp_sprite(int x, int y, int sprite, frame_t *dest)
-{
-	sprite_t *spr = gfx_get_data_object(sprite, NULL);
-	if (spr != NULL) sdl_draw_transp_sprite(spr, x, y, 0, 0, 0, dest);
-}
-
-/* Fill a rectangle with color at x, y in the dest frame. */
+/* Draw a rectangle with color at x, y in the dest frame. */
 void
 gfx_fill_rect(int x, int y, int width, int height, int color, frame_t *dest)
 {
-	sdl_fill_rect(x, y, width, height, color, dest);
+	uint8_t *palette = (uint8_t*)data_get_object(DATA_PALETTE_GAME, NULL);
+	color_t c = { palette[3*color+0], palette[3*color+1],
+		      palette[3*color+2], 0xff };
+
+	sdl_fill_rect(x, y, width, height, &c, dest);
 }
 
-/* Perform various fixups of the data file entries. */
+
+/* Initialize new graphics frame. If dest is NULL a new
+   backing surface is created, otherwise the same surface
+   as dest is used. */
 void
-gfx_data_fixup()
+gfx_frame_init(frame_t *frame, int x, int y, int width, int height, frame_t *dest)
 {
-	spae_entry_t *entries = sprites;
-
-	/* Fill out some undefined spaces in the index from other
-	   places in the data file index. */
-
-	for (int i = 0; i < 48; i++) {
-		for (int j = 1; j < 6; j++) {
-			entries[3450+6*i+j].size = entries[3450+6*i].size;
-			entries[3450+6*i+j].offset = entries[3450+6*i].offset;
-		}
-	}
-
-	for (int i = 0; i < 3; i++) {
-		entries[3765+i].size = entries[3762+i].size;
-		entries[3765+i].offset = entries[3762+i].offset;
-	}
-
-	for (int i = 0; i < 6; i++) {
-		entries[1363+i].size = entries[1352].size;
-		entries[1363+i].offset = entries[1352].offset;
-	}
-
-	for (int i = 0; i < 6; i++) {
-		entries[1613+i].size = entries[1602].size;
-		entries[1613+i].offset = entries[1602].offset;
-	}
+	sdl_frame_init(frame, x, y, width, height, dest);
 }
 
-/* Select the color palette that is location at the given data file index. */
+/* Deinitialize frame and backing surface. */
 void
-gfx_set_palette(int palette)
+gfx_frame_deinit(frame_t *frame)
 {
-	uint8_t *pal = gfx_get_data_object(palette, NULL);
-	sdl_set_palette(pal);
+	sdl_frame_deinit(frame);
 }
 
-/* Unpack the uncompressed data of a transparent sprite. */
+/* Draw source frame from rectangle at sx, sy with given
+   width and height, to destination frame at dx, dy. */
 void
-gfx_unpack_transparent_sprite(void *dest, const void *src, size_t destlen, int offset)
+gfx_draw_frame(int dx, int dy, frame_t *dest, int sx, int sy, frame_t *src, int w, int h)
 {
-	const uint8_t *bsrc = (uint8_t *)src;
-	uint8_t *bdest = (uint8_t *)dest;
-
-	int i = 0;
-	int j = 0;
-	while (j < destlen) {
-		j += bsrc[i];
-		int n = bsrc[i+1];
-
-		if (n) {
-			memcpy(&bdest[j], &bsrc[i+2], n);
-			if (offset) {
-				for (int k = 0; k < n; k++) {
-					bdest[j+k] += offset;
-				}
-			}
-		}
-		i += n + 2;
-		j += n;
-	}
+	sdl_draw_frame(dx, dy, dest, sx, sy, src, w, h);
 }
 
-/* Unpack the uncompressed data of a bitmap sprite. */
-static void
-gfx_unpack_bitmap_sprite(void *dest, const void *src, size_t destlen, int value)
+
+/* Enable or disable fullscreen mode */
+int
+gfx_set_fullscreen(int enable)
 {
-	const uint8_t *bsrc = (uint8_t *)src;
-	uint8_t *bdest = (uint8_t *)dest;
-
-	int i = 0;
-	int j = 0;
-	while (j < destlen) {
-		j += bsrc[i];
-		int n = bsrc[i+1];
-
-		for (int k = 0; k < n; k++) bdest[j+k] = value;
-
-		i += 2;
-		j += n;
-	}
+	return sdl_set_fullscreen(enable);
 }
 
-/* Unpack the uncompressed data of an overlay sprite. */
-void
-gfx_unpack_overlay_sprite(void *dest, const void *src, size_t destlen)
+/* Check whether fullscreen mode is enabled */
+int
+gfx_is_fullscreen()
 {
-	gfx_unpack_bitmap_sprite(dest, src, destlen, 0x80);
-}
-
-/* Unpack the uncompressed data of a mask sprite. */
-void
-gfx_unpack_mask_sprite(void *dest, const void *src, size_t destlen)
-{
-	gfx_unpack_bitmap_sprite(dest, src, destlen, 0xff);
+	return sdl_is_fullscreen();
 }
