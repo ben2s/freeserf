@@ -2,5 +2,9 @@
 pushd `dirname $0` >/dev/null
 [ -e Makefile ] && make clean
 [ -e Makefile ] && make distclean
-for f in `cat .gitignore`; do [ $f != SPAE.PA ] && rm -rvf $f; done
+while read f; do
+ if [[ $f != \#* ]]; then
+  [ "$f" != "SPAE.PA" ] && rm -rvf "$f"
+ fi
+done < .gitignore
 popd >/dev/null
